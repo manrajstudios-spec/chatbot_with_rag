@@ -7,9 +7,8 @@ from torch.utils.data import DataLoader,Dataset
 from transformers import get_scheduler
 from sklearn.model_selection import StratifiedShuffleSplit
 import json
+
 device = "cuda" if torch.cuda.is_available() else "cpu"
-
-
 
 with open("../Data/data.json", 'r') as file:
     data = json.load(file)
@@ -37,10 +36,7 @@ for i, layer in enumerate(model.distilbert.transformer.layer):
             param.requires_grad = False
 
 
-model.classifier = nn.Sequential(
-    nn.Dropout(0.3),
-    nn.Linear(model.config.dim, 2)
-)
+model.classifier = nn.Sequential(nn.Dropout(0.3),nn.Linear(model.config.dim, 2))
 model.classifier.to(device)
 
 class Make_Dataset(Dataset):

@@ -15,7 +15,7 @@ dataset = {
     "labels": list(labels)
 }
 
-with open("/home/manraj_studios/PycharmProjects/Yuzu-Ai-Companion/Data/data.json", "w", encoding="utf-8") as f:
+with open("/home/manraj_studios/PycharmProjects/Yuzu-Ai-Companion/Data/retrieve_clf_data.json", "w", encoding="utf-8") as f:
     json.dump(dataset, f, ensure_ascii=False, indent=2)
 
 

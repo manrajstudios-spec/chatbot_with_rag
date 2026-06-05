@@ -10,7 +10,7 @@ import json
 
 device = "cuda" if torch.cuda.is_available() else "cpu"
 
-with open("../Data/data.json", 'r') as file:
+with open("../Data/docs/clfs_data/retrieve_clf_data.json", 'r') as file:
     data = json.load(file)
 
 split = StratifiedShuffleSplit(n_splits=1,test_size=0.35,random_state=42)

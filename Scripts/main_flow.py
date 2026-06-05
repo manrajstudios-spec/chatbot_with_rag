@@ -56,6 +56,12 @@ n = 4
 sys = {"role": "system", "content": sys_prompt}
 exchanges = []
 
+def ask_user(input_msg):
+    while True:
+        user_input = input(f"{input_msg}: ")
+        if user_input:
+            return user_input
+
 def retrieve_summary(user_query):
     return get_result(user_query)
 
@@ -73,15 +79,15 @@ def make_hist():
     print(exchanges)
 
 while True:
-    ask_user = input("Enter Your Query \n\n")
+    user_input = ask_user("Enter Your Query \n")
 
-    if ask_user:
-        if ask_user == "q":
+    if user_input:
+        if user_input == "q":
             if exchanges:
                 make_hist()
             break
 
-        summary = get_matches(ask_user,10) if retrieve_summary(ask_user) else ""
+        summary = get_matches(user_input,10) if retrieve_summary(user_input) else ""
         print(f"DEBUG {summary}")
 
 
@@ -103,9 +109,9 @@ while True:
         temp_hist.append(sys)
         temp_hist.append({"role":"system","content":result})
         temp_hist = temp_hist + exchanges
-        temp_hist.append({"role":"user","content": f"{result} \nuser: {ask_user}"})
+        temp_hist.append({"role":"user","content": f"{result} \nuser: {user_input}"})
 
-        exchanges.append({"role":"user","content":ask_user})
+        exchanges.append({"role":"user","content":user_input})
 
         response = client.chat.completions.create(model="openai/gpt-oss-120b",messages=temp_hist,stream=True)
 

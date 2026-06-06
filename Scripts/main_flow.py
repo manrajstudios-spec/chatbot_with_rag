@@ -3,6 +3,7 @@ from rag_system import add_turn,get_matches
 import os
 from dotenv import load_dotenv
 from retrieving_clf import get_result
+from doc_reader import load_docs,unload_docs,compare_msg
 
 load_dotenv()
 
@@ -78,8 +79,31 @@ def make_hist():
     exchanges = exchanges[:n]
     print(exchanges)
 
+loaded_docs = []
+
 while True:
+    if loaded_docs:
+        user = ask_user("Press 1 To Continue Or Press r to remove docs \n")
+
+        if user == "r":
+            loaded_docs = unload_docs(loaded_docs)
+
+    user_choice = ask_user("Want To Add Doc Doc Or Not (1 for yes 0 for no) \n")
+
+    if user_choice and user_choice.isdigit():
+        if user_choice == "1":
+            loaded_docs = load_docs()
+            if not loaded_docs:
+                print("Canceled Doc Referencing Process")
+            else:
+                for i,doc in enumerate(loaded_docs):
+                    print(f"{i+1}: {doc["file_name"]}")
+    else:
+        continue
+
     user_input = ask_user("Enter Your Query \n")
+    summary = ""
+    temp_hist = []
 
     if user_input:
         if user_input == "q":
@@ -87,29 +111,34 @@ while True:
                 make_hist()
             break
 
-        summary = get_matches(user_input,10) if retrieve_summary(user_input) else ""
-        print(f"DEBUG {summary}")
+        if not loaded_docs:
+            summary = get_matches(user_input,10) if retrieve_summary(user_input) else ""
+            print(f"DEBUG {summary}")
 
+            memory_prompt = f"""You are recalling relevant context from past conversations.
 
-        prompt = f"""You are recalling relevant context from past conversations.
+            Retrieved Memory:
+            {summary}
 
-        Retrieved Memory:
-        {summary}
+            Instructions:
+            - Use this memory ONLY when directly relevant to the current message
+            - Prioritize recent conversation over old memory
+            - If user asks about something mentioned in memory, reference it naturally
+            - Do NOT force memory into every response
+            - Treat memory as background knowledge, not a script to follow
+            """
+            result = memory_prompt if summary else ""
 
-        Instructions:
-        - Use this memory ONLY when directly relevant to the current message
-        - Prioritize recent conversation over old memory
-        - If user asks about something mentioned in memory, reference it naturally
-        - Do NOT force memory into every response
-        - Treat memory as background knowledge, not a script to follow
-        """
-        result = prompt if summary else ""
+            temp_hist.append(sys)
+            temp_hist.append({"role": "system", "content": result})
+        else:
+            relevant_info = compare_msg(user_input,loaded_docs,10)
+            print(f"DEBUG {relevant_info}")
+            doc_data = f"This Info Is Retrieved From Relevant Doc According To Users Query {relevant_info}"
+            temp_hist.append({"role":"system", "content": doc_data})
 
-        temp_hist = []
-        temp_hist.append(sys)
-        temp_hist.append({"role":"system","content":result})
-        temp_hist = temp_hist + exchanges
-        temp_hist.append({"role":"user","content": f"{result} \nuser: {user_input}"})
+        temp_hist.extend(exchanges)
+        temp_hist.append({"role":"user","content": f"user: {user_input}"})
 
         exchanges.append({"role":"user","content":user_input})
 
@@ -128,5 +157,3 @@ while True:
 
         if len(exchanges)/2  == n:
             make_hist()
-
-

@@ -1,9 +1,12 @@
-from openai import OpenAI
-from rag_system import add_turn,get_matches
 import os
+from openai import OpenAI
+from keybert import KeyBERT
 from dotenv import load_dotenv
 from retrieving_clf import get_result
+from rag_system import add_turn,get_matches
 from doc_reader import load_docs,unload_docs,compare_msg
+
+get_key_words = KeyBERT()
 
 load_dotenv()
 
@@ -57,6 +60,11 @@ n = 4
 sys = {"role": "system", "content": sys_prompt}
 exchanges = []
 
+def extract_key_words(chunk):
+    keys = get_key_words.extract_keywords(chunk)
+    key_words = [k[0] for k in keys]
+    return key_words
+
 def ask_user(input_msg):
     while True:
         user_input = input(f"{input_msg}: ")
@@ -88,21 +96,23 @@ while True:
         if user == "r":
             loaded_docs = unload_docs(loaded_docs)
 
-    user_choice = ask_user("Want To Add Doc Doc Or Not (1 for yes 0 for no) \n")
+    if not loaded_docs:
+        user_choice = ask_user("Want To Add Doc Doc Or Not (1 for yes 0 for no) \n")
 
-    if user_choice and user_choice.isdigit():
-        if user_choice == "1":
-            loaded_docs = load_docs()
-            if not loaded_docs:
-                print("Canceled Doc Referencing Process")
-            else:
-                for i,doc in enumerate(loaded_docs):
-                    print(f"{i+1}: {doc["file_name"]}")
-    else:
-        continue
+        if user_choice and user_choice.isdigit():
+            if user_choice == "1":
+                loaded_docs = load_docs()
+                if not loaded_docs:
+                    print("Canceled Doc Referencing Process")
+                else:
+                    for i,doc in enumerate(loaded_docs):
+                        print(f"{i+1}: {doc["file_name"]}")
+        else:
+            continue
 
     user_input = ask_user("Enter Your Query \n")
     summary = ""
+    facts = []
     temp_hist = []
 
     if user_input:
@@ -112,8 +122,13 @@ while True:
             break
 
         if not loaded_docs:
-            summary = get_matches(user_input,10) if retrieve_summary(user_input) else ""
-            print(f"DEBUG {summary}")
+            if retrieve_summary(user_input):
+                out = get_matches(user_input,10)
+                summary = out[0]
+                facts = [1]
+
+            print(f"DEBUG {summary} \nFacts: {facts}")
+
 
             memory_prompt = f"""You are recalling relevant context from past conversations.
 
@@ -126,7 +141,12 @@ while True:
             - If user asks about something mentioned in memory, reference it naturally
             - Do NOT force memory into every response
             - Treat memory as background knowledge, not a script to follow
+            
+            These Are User Facts 
+            {", ".join(facts)}
+            Only use them when you think kits needed dont unnecessarily say you like this you had this appointment 
             """
+
             result = memory_prompt if summary else ""
 
             temp_hist.append(sys)

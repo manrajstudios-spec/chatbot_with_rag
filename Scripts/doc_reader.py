@@ -7,15 +7,13 @@ import spacy
 from openai import OpenAI
 from dotenv import load_dotenv
 from tkinter import Tk,filedialog
-from keybert import KeyBERT
+from main_flow import extract_key_words
 
 root = Tk()
 root.withdraw()
 
 nlp = spacy.load('en_core_web_sm', disable=['ner', 'lemmatizer'])
 nlp.enable_pipe('senter')
-
-get_key_words = KeyBERT()
 
 load_dotenv()
 api_key = os.getenv("groq")
@@ -134,7 +132,7 @@ def read_doc(path):
 
     return clean_text(text)
 
-def make_summaries(chunks):
+def make_batch(chunks):
     len_batch = 3
 
     batches = []
@@ -145,12 +143,14 @@ def make_summaries(chunks):
             index += len_batch
             batch_text = ""
             for k in range(len_batch):
-                if i+k <len(chunks):
-                    batch_text += f"Chunk {k}: {chunks[i+k]} \n"
+                if i + k < len(chunks):
+                    batch_text += f"Chunk {k}: {chunks[i + k]} \n"
 
             batches.append(batch_text)
 
+    return batches
 
+def make_summaries(batches):
     summaries = []
     for batch in batches:
         s = get_summary(batch)
@@ -166,7 +166,15 @@ def insert_doc():
     if not filepath:
         print("No file selected")
     else:
-        add_doc(filepath)
+        with_summary = False
+        ask_with_summary = ask_user("Do You Want To Save Summary of doc OR actual doc (Press 0 for Actual 1 For Summary) (Note Summaries can be Wrong Or might not cover details): ")
+
+        if ask_with_summary == "0":
+            with_Summary = False
+        else:
+            with_Summary = True
+
+        add_doc(filepath,with_summary)
 
 def make_chunks(t):
     paras = t.split("\n")
@@ -211,7 +219,7 @@ def make_chunks(t):
 
     return chunks
 
-def add_doc(doc_path):
+def add_doc(doc_path,with_summary=False):
     file_name = doc_path.split("/")[-1]
     file_name = file_name.split(".")[0]
 
@@ -229,28 +237,37 @@ def add_doc(doc_path):
             text = f.read()
 
     chunks = make_chunks(text)
-    summaries = make_summaries(chunks)
-
+    batches = make_batch(chunks)
     key_words = []
     embeddings = []
+    summaries = []
+    if with_summary:
+        summaries = make_summaries(batches)
 
-    for summary in summaries:
-        e = get_embedding(summary["summary"])
-        embeddings.append(e)
+        for summary in summaries:
+            e = get_embedding(summary["summary"])
+            embeddings.append(e)
 
-        if not summary["key_words"]:
-            key_words.append([])
-        else:
-            key_words.append(summary["key_words"])
+            if not summary["key_words"]:
+                key_words.append([])
+            else:
+                key_words.append(summary["key_words"])
+    else:
+        for chunk in chunks:
+            key_words.extend(extract_key_words(chunk))
+            e = get_embedding(chunk)
+            embeddings.append(e)
+
 
     np_keywords = np.array(key_words,dtype=object)
+    print(np_keywords)
     np_embeddings = np.array(embeddings,dtype=np.float32)
 
     file_name_npz = f"../Data/docs/npz_files/{file_name}.npz"
     mean_embedding = np.mean(np_embeddings,axis=0)
     np.savez(file_name_npz,key_words=np_keywords,embeddings=np_embeddings,mean_embedding=mean_embedding)
 
-    json_dict = {"file_name":file_name ,"npz_path":file_name_npz ,"summary":"\n ".join([i["summary"] for i in summaries])}
+    json_dict = {"file_name":file_name ,"npz_path":file_name_npz ,"doc_data":"\n ".join([i["summary"] for i in summaries]) if with_summary else "\n ".join([i for i in chunks])}
 
     write_json(json_dict)
 
@@ -327,7 +344,7 @@ def load_docs():
 
     for doc in selected_docs:
         npz_file = load_npz(doc["npz_path"])
-        loaded_docs.append({"file_name":doc["file_name"],"summary":doc["summary"],"key_words":npz_file["key_words"],"embeddings":npz_file["embeddings"],"mean_embedding":npz_file["mean_embedding"]})
+        loaded_docs.append({"file_name":doc["file_name"],"doc_data":doc["doc_data"],"key_words":npz_file["key_words"],"embeddings":npz_file["embeddings"],"mean_embedding":npz_file["mean_embedding"]})
 
     return loaded_docs
 
@@ -345,32 +362,25 @@ def unload_docs(loaded_docs):
             return loaded_docs
 
         if u_i and u_i.isdigit():
-            if int(u_i) > len(loaded_docs) or int(u_i) < 0:
+            if int(u_i) > len(loaded_docs) or int(u_i) <= 0:
                 print("Invalid Input: ")
                 continue
 
-            loaded_docs.pop(int(u_i))
+            loaded_docs.pop(int(u_i) - 1)
 
 def compare_msg(msg,loaded_docs,k):
     embedded_msg = np.array(get_embedding(msg),dtype=np.float32).flatten()
-    overall_threshold = 0.6
-    inner_threshold = 0.5
-    key_words = get_key_words.extract_keywords(msg)
+    inner_threshold = 0.45
+    key_words = extract_key_words(msg)
     key_words = [i[0] for i in key_words]
+    print(key_words)
 
-    selected = []
-    summary_saved = []
+    data_kept = []
 
     for i,doc in enumerate(loaded_docs):
-        mean = doc["mean_embedding"]
-        similarity = np.dot(embedded_msg,mean)/(np.linalg.norm(embedded_msg) * np.linalg.norm(mean))
-        if similarity > overall_threshold:
-            selected.append(doc)
-
-    for i,doc in enumerate(selected):
         chunk_embeddings = doc["embeddings"]
         chunk_keys = doc["key_words"]
-        chunk_summary = doc["summary"].split("\n")
+        chunk_data = doc["doc_data"].split("\n")
 
         similarity = np.dot(chunk_embeddings,embedded_msg)/(np.linalg.norm(chunk_embeddings,axis=1) * np.linalg.norm(embedded_msg))
         topic_score = [sum(1 for x in key_words if x in chunk_key)/len(chunk_key) if chunk_key else 0 for chunk_key in chunk_keys]
@@ -384,6 +394,6 @@ def compare_msg(msg,loaded_docs,k):
         print(passing_indices)
 
         for i in passing_indices:
-            summary_saved.append(chunk_summary[i])
+            data_kept.append(chunk_data[i])
 
-    return summary_saved
+    return data_kept

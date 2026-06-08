@@ -3,6 +3,10 @@
 A conversational AI with long-term memory, built from scratch — no LangChain, no vector DB libraries. Uses a two-level hierarchical retrieval architecture backed by SQLite and NumPy.
 
 ---
+<img width="713" height="698" alt="User_flow" src="https://github.com/user-attachments/assets/c1140ee4-5bc4-41a1-842d-cbe86a3c824a" />
+---
+<img width="636" height="492" alt="Summary_Flow" src="https://github.com/user-attachments/assets/83268fd3-5967-4ae4-98e4-214ee94ffae8" />
+---
 
 ## Overview
 

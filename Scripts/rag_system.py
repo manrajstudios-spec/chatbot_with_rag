@@ -19,7 +19,7 @@ embeddings_model = "text-embedding-embeddinggemma-300m"
 
 all_facts= []
 
-sys_prompt = f"""
+sys_prompt = f'''
 You are a conversation memory summarizer.
 Your job is to convert each conversation exchange into structured JSON.
 
@@ -53,7 +53,7 @@ If none exist, use []
 
 SIMPLIFIED GOAL
 Turn each conversation exchange into a clean memory record that is easy to store and search.
-"""
+'''
 
 complex_rag = sqlite3.connect("../Data/complex_rag.db")
 cursor_complex_rag = complex_rag.cursor()

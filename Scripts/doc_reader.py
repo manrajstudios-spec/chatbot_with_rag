@@ -1,24 +1,13 @@
-import os
 import re
 import json
+import loader
 import pdfplumber
 import numpy as np
-import spacy
-from openai import OpenAI
-from dotenv import load_dotenv
 from tkinter import Tk,filedialog
-from main_flow import extract_key_words
 
 root = Tk()
 root.withdraw()
 
-nlp = spacy.load('en_core_web_sm', disable=['ner', 'lemmatizer'])
-nlp.enable_pipe('senter')
-
-load_dotenv()
-api_key = os.getenv("groq")
-
-client_lm = OpenAI(base_url="http://127.0.0.1:1234/v1", api_key="lm_studio")
 summary_model = "nvidia/nemotron-3-nano-4b"
 embeddings_model = "text-embedding-embeddinggemma-300m"
 
@@ -101,7 +90,7 @@ EXAMPLE OUTPUT:
     """
 
     m = [{"role":"system","content":f"{sys_prompt}"},{"role":"user","content":f"Doc Chunks: {query}"}]
-    response = client_lm.chat.completions.create(model=summary_model, messages=m)
+    response = loader.lm_client.chat.completions.create(model=summary_model, messages=m)
 
     raw = response.choices[0].message.content
     if raw:
@@ -111,7 +100,7 @@ EXAMPLE OUTPUT:
             print(f"Parsing Error: {e}")
 
 def get_embedding(query):
-    response = client_lm.embeddings.create(model=embeddings_model, input=query)
+    response = loader.lm_client.embeddings.create(model=embeddings_model, input=query)
 
     return response.data[0].embedding
 
@@ -170,9 +159,9 @@ def insert_doc():
         ask_with_summary = ask_user("Do You Want To Save Summary of doc OR actual doc (Press 0 for Actual 1 For Summary) (Note Summaries can be Wrong Or might not cover details): ")
 
         if ask_with_summary == "0":
-            with_Summary = False
+            with_summary = False
         else:
-            with_Summary = True
+            with_summary = True
 
         add_doc(filepath,with_summary)
 
@@ -195,7 +184,7 @@ def make_chunks(t):
             chunks.append(text)
             cur_chunk = ""
         else:
-            splits = nlp(text)
+            splits = loader.nlp(text)
             sentencez = [s.text.strip() for s in splits.sents]
 
             count = 0
@@ -254,7 +243,7 @@ def add_doc(doc_path,with_summary=False):
                 key_words.append(summary["key_words"])
     else:
         for chunk in chunks:
-            key_words.extend(extract_key_words(chunk))
+            key_words.extend(loader.extract_key_words(chunk))
             e = get_embedding(chunk)
             embeddings.append(e)
 
@@ -308,7 +297,7 @@ def select_docs():
         if user_choice == "q":
             return selected_docs
 
-        if user_choice and user_choice.isdigit() or user_choice not in options:
+        if user_choice and user_choice.isdigit() or (int(user_choice) not in options and user_choice.isdigit()):
             user_choice = int(user_choice)
 
             if user_choice > len(docs) :
@@ -371,7 +360,7 @@ def unload_docs(loaded_docs):
 def compare_msg(msg,loaded_docs,k):
     embedded_msg = np.array(get_embedding(msg),dtype=np.float32).flatten()
     inner_threshold = 0.45
-    key_words = extract_key_words(msg)
+    key_words = loader.extract_key_words(msg)
     key_words = [i[0] for i in key_words]
     print(key_words)
 

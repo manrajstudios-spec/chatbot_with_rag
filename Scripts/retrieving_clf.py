@@ -1,16 +1,13 @@
 import torch
-from transformers import AutoTokenizer,AutoModelForSequenceClassification
-
-tokenizer = AutoTokenizer.from_pretrained("/home/manraj_studios/PycharmProjects/Yuzu-Ai-Companion/Model/intent_tokenizer")
-model = AutoModelForSequenceClassification.from_pretrained("/home/manraj_studios/PycharmProjects/Yuzu-Ai-Companion/Model/intent_clf")
-
+import loader
 
 def get_result(text_to_evaluate):
-    model.eval()
-    tokens = tokenizer([text_to_evaluate],padding=True,truncation=True,max_lenght=64)
-    out = model(
-        input_ids=torch.tensor(tokens["input_ids"]),
-        attention_mask=torch.tensor(tokens["attention_mask"]))
+    loader.model.eval()
+
+    tokens = loader.tokenizer([text_to_evaluate],padding=True,truncation=True,max_length=64,return_tensors="pt")
+
+    with torch.no_grad():
+        out = loader.model(input_ids=tokens["input_ids"],attention_mask=tokens["attention_mask"])
 
     pred = out.logits.argmax(dim=1).item()
 

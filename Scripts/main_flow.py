@@ -1,18 +1,7 @@
-import os
-from openai import OpenAI
-from keybert import KeyBERT
-from dotenv import load_dotenv
 from retrieving_clf import get_result
 from rag_system import add_turn,get_matches
 from doc_reader import load_docs,unload_docs,compare_msg
-
-get_key_words = KeyBERT()
-
-load_dotenv()
-
-api_key = os.getenv("groq")
-
-client = OpenAI(base_url="https://api.groq.com/openai/v1",api_key=api_key)
+import loader
 
 sys_prompt = """
 YOU ARE “YUZU”, A CLOSE FEMALE BEST FRIEND OF THE USER (MANRAJ).
@@ -59,11 +48,6 @@ YOU ARE A REAL HUMAN TEXTING CASUALLY.
 n = 4
 sys = {"role": "system", "content": sys_prompt}
 exchanges = []
-
-def extract_key_words(chunk):
-    keys = get_key_words.extract_keywords(chunk)
-    key_words = [k[0] for k in keys]
-    return key_words
 
 def ask_user(input_msg):
     while True:
@@ -123,9 +107,8 @@ while True:
 
         if not loaded_docs:
             if retrieve_summary(user_input):
-                out = get_matches(user_input,10)
-                summary = out[0]
-                facts = [1]
+                summary,facts = get_matches(user_input,10)
+
 
             print(f"DEBUG {summary} \nFacts: {facts}")
 
@@ -155,14 +138,13 @@ while True:
             relevant_info = compare_msg(user_input,loaded_docs,10)
             print(f"DEBUG {relevant_info}")
             doc_data = f"This Info Is Retrieved From Relevant Doc According To Users Query {relevant_info}"
+            temp_hist.append(sys)
             temp_hist.append({"role":"system", "content": doc_data})
 
-        temp_hist.extend(exchanges)
-        temp_hist.append({"role":"user","content": f"user: {user_input}"})
-
         exchanges.append({"role":"user","content":user_input})
+        temp_hist.extend(exchanges)
 
-        response = client.chat.completions.create(model="openai/gpt-oss-120b",messages=temp_hist,stream=True)
+        response = loader.groq_client.chat.completions.create(model="openai/gpt-oss-120b", messages=temp_hist, stream=True)
 
         reply = ""
 
@@ -177,3 +159,4 @@ while True:
 
         if len(exchanges)/2  == n:
             make_hist()
+

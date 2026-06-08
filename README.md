@@ -7,7 +7,8 @@ A conversational AI with long-term memory, built from scratch — no LangChain, 
 ---
 <img width="636" height="492" alt="Summary_Flow" src="https://github.com/user-attachments/assets/83268fd3-5967-4ae4-98e4-214ee94ffae8" />
 ---
-
+<img width="580" height="553" alt="docs" src="https://github.com/user-attachments/assets/b9daa65e-ed78-4f8a-b294-fc3a0e4e99fe" />
+---
 ## Overview
 
 Most RAG systems dump everything into a flat index and brute-force similarity search. This system organizes memories into topic clusters, doing coarse-to-fine retrieval:

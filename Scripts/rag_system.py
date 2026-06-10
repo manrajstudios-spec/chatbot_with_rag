@@ -3,6 +3,7 @@ import json
 import loader
 import sqlite3
 import numpy as np
+from HNSW import compare_embed,make_graph
 
 summary_model = "openai/gpt-oss-120b"
 embeddings_model = "text-embedding-embeddinggemma-300m"
@@ -40,7 +41,7 @@ SIMPLIFIED GOAL
 Turn each conversation exchange into a clean memory record that is easy to store and search.
 '''
 
-complex_rag = sqlite3.connect("../Data/complex_rag.db")
+complex_rag = sqlite3.connect("../Data/chat_data/complex_rag.db")
 cursor_complex_rag = complex_rag.cursor()
 
 cursor_complex_rag.execute("CREATE TABLE IF NOT EXISTS master_table("
@@ -79,12 +80,14 @@ def get_embedding(summary):
 def add_new_group(summary,embedding,key_words):
     group_name = str(uuid.uuid4()).replace("-", "")
 
-    cursor_complex_rag.execute(f'CREATE TABLE "{group_name}"(id INTEGER PRIMARY KEY AUTOINCREMENT,summary TEXT,embedding BLOB,tone TEXT,key_words TEXT); ')
+    cursor_complex_rag.execute(f'CREATE TABLE "{group_name}"(id INTEGER PRIMARY KEY AUTOINCREMENT,summary TEXT,embedding BLOB,key_words TEXT); ')
     cursor_complex_rag.execute(
         f'INSERT INTO "{group_name}" (summary, embedding,key_words) VALUES (?, ?,?)',(summary, np.array(embedding, dtype=np.float32).tobytes(),"' ".join(key_words)))
     complex_rag.commit()
 
     cursor_complex_rag.execute("INSERT INTO master_table (tables_name, group_embeddings, count, key_words) VALUES (?, ?, ?, ?)",(group_name, np.array(embedding, dtype=np.float32).tobytes(), 1, ", ".join(key_words)))
+
+    make_graph(embedding,0.7,group_name)
     complex_rag.commit()
 
 def add_turn(hist):
@@ -96,13 +99,11 @@ def add_turn(hist):
         facts = r['facts']
         f = facts
         cur_key_words = loader.extract_key_words(summary)
-
         cur_key_words = [kw for kw in cur_key_words if kw != "assistant"]
 
-
+        summary += f"KeyWords: {", ".join(cur_key_words)}"
         embedding = get_embedding(summary)
         group_names = compare_embedding_master_table(embedding, cur_key_words, 4)
-
 
         if group_names:
             for name in group_names:
@@ -123,6 +124,13 @@ def add_turn(hist):
                 cursor_complex_rag.execute(
                     'UPDATE master_table SET count=?, key_words=?, group_embeddings=? WHERE tables_name=?',
                     (count+1, ", ".join(all_keys), np.array(new_mean,dtype=np.float32).tobytes(), name))
+
+                cursor_complex_rag.execute(f'SELECT embedding FROM "{name}"')
+                row = cursor_complex_rag.fetcall()
+
+                embeddings_all = [np.frombuffer(r[0],dtype=np.float32) for r in row]
+                make_graph(np.array(embeddings_all,dtype=np.float32),0.7,name)
+
                 print(f"Old Group ")
 
         else:
@@ -132,7 +140,7 @@ def add_turn(hist):
     write_facts(f)
 
 def compare_embedding_master_table(embedding, key_words, k):
-    print("Getting matched Groupds")
+    print("Getting matched Groups")
     embedding = np.array(embedding, dtype=np.float32)
     cursor_complex_rag.execute("SELECT tables_name,group_embeddings,key_words FROM master_table")
     rows = cursor_complex_rag.fetchall()
@@ -143,22 +151,12 @@ def compare_embedding_master_table(embedding, key_words, k):
     names = [row[0] for row in rows]
 
     embeddings = np.array([np.frombuffer(row[1], dtype=np.float32) for row in rows])
-    row_topics = [row[2].split(", ") for row in rows]
     norms = np.linalg.norm(embeddings, axis=1) * np.linalg.norm(embedding)
     norms = np.where(norms == 0, 1e-9, norms)
-
     similarity = (embeddings @ embedding) / norms
-    combined = similarity
     threshold = 0.7
-
-    if key_words:
-        user_kw_set = set(key_words)
-        kw_score = np.array([len(set(kw) & user_kw_set) / max(len(kw), 1) for kw in row_topics], dtype=np.float32)
-        combined = (similarity * 0.6) + (kw_score * 0.4)
-        threshold = 0.2
-
-    combined_idx = combined.argsort()[::-1]
-    selected = [i for i in combined_idx[:min(k, len(combined_idx))] if combined[i] > threshold]
+    similarity_ids = similarity.argsort()[::-1]
+    selected = [i for i in similarity_ids[:min(k, len(similarity_ids))] if similarity[i] > threshold]
 
     return [names[i] for i in selected]
 
@@ -174,28 +172,22 @@ def compare_embed_group(group_name, u_e, u_kw, k):
     summaries = [row[0] for row in rows]
 
     embeddings = np.array([np.frombuffer(row[1], dtype=np.float32) for row in rows])
-    row_kws = [row[2].split(", ") for row in rows]
     u_e = np.array(u_e, dtype=np.float32)
 
     norms = np.linalg.norm(embeddings, axis=1) * np.linalg.norm(u_e)
     norms = np.where(norms == 0, 1e-9, norms)
     similarity = (embeddings @ u_e) / norms
-    combined = similarity
     threshold = 0.7
 
-    if u_kw:
-        user_kw_set = set(u_kw)
-        kw_score = np.array([len(set(kw) & user_kw_set) / max(len(kw), 1) for kw in row_kws], dtype=np.float32)
-        combined = (similarity * 0.6) + (kw_score * 0.4)
-        threshold = 0.2
+    ids = compare_embed(embeddings,similarity,group_name,threshold)
+    similarity = similarity[ids]
+    similarity_ids = similarity.argsort()[::-1]
 
-    combined_idx = combined.argsort()[::-1]
-    selected = [i for i in combined_idx[:min(k, len(combined_idx))] if combined[i] > threshold]
-
-    return [summaries[i] for i in selected]
+    return [summaries[i] for i in similarity_ids]
 
 def get_matches(user,k):
     keywords = loader.extract_key_words(user)
+    user += f"keywords: {keywords}"
     embedding = get_embedding(user)
     matches = compare_embedding_master_table(embedding, keywords, k)
     summaries=set()

@@ -4,6 +4,7 @@ import loader
 import pdfplumber
 import numpy as np
 from tkinter import Tk,filedialog
+from HNSW import compare_embed,make_graph
 
 root = Tk()
 root.withdraw()
@@ -230,6 +231,7 @@ def add_doc(doc_path,with_summary=False):
     key_words = []
     embeddings = []
     summaries = []
+
     if with_summary:
         summaries = make_summaries(batches)
 
@@ -243,10 +245,10 @@ def add_doc(doc_path,with_summary=False):
                 key_words.append(summary["key_words"])
     else:
         for chunk in chunks:
-            key_words.extend(loader.extract_key_words(chunk))
-            e = get_embedding(chunk)
+            kw = loader.extract_key_words(chunk)
+            key_words.extend(kw)
+            e = get_embedding(chunk + f"Keywords: {", ".join(kw)}")
             embeddings.append(e)
-
 
     np_keywords = np.array(key_words,dtype=object)
     print(np_keywords)
@@ -257,6 +259,8 @@ def add_doc(doc_path,with_summary=False):
     np.savez(file_name_npz,key_words=np_keywords,embeddings=np_embeddings,mean_embedding=mean_embedding)
 
     json_dict = {"file_name":file_name ,"npz_path":file_name_npz ,"doc_data":"\n ".join([i["summary"] for i in summaries]) if with_summary else "\n ".join([i for i in chunks])}
+
+    make_graph(np_embeddings,0.8,file_name)
 
     write_json(json_dict)
 
@@ -358,31 +362,20 @@ def unload_docs(loaded_docs):
             loaded_docs.pop(int(u_i) - 1)
 
 def compare_msg(msg,loaded_docs,k):
-    embedded_msg = np.array(get_embedding(msg),dtype=np.float32).flatten()
-    inner_threshold = 0.45
     key_words = loader.extract_key_words(msg)
-    key_words = [i[0] for i in key_words]
-    print(key_words)
+    embedded_msg = np.array(get_embedding(msg + f"KeyWords: {", ".join(key_words)}"),dtype=np.float32).flatten()
 
-    data_kept = []
+    similar_chunks = []
 
     for i,doc in enumerate(loaded_docs):
-        chunk_embeddings = doc["embeddings"]
-        chunk_keys = doc["key_words"]
-        chunk_data = doc["doc_data"].split("\n")
+        ids = compare_embed(doc["embeddings"],embedded_msg,doc["file_name"],0.8)
+        chunks = doc["doc_data"].split("\n")
 
-        similarity = np.dot(chunk_embeddings,embedded_msg)/(np.linalg.norm(chunk_embeddings,axis=1) * np.linalg.norm(embedded_msg))
-        topic_score = [sum(1 for x in key_words if x in chunk_key)/len(chunk_key) if chunk_key else 0 for chunk_key in chunk_keys]
-        topic_score = np.array(topic_score,dtype=np.float32)
+        for i,chunk in enumerate(chunks):
+            if i in ids:
+                similar_chunks.append(chunk)
 
-        combined = similarity + topic_score
-        combined_indices = np.argsort(combined)[::-1][:min(k,len(combined))]
-        print(combined)
+        similar_chunks.append("Next Doc Data Starts Here: ")
 
-        passing_indices = [i for i in combined_indices if combined[i] >= inner_threshold]
-        print(passing_indices)
 
-        for i in passing_indices:
-            data_kept.append(chunk_data[i])
-
-    return data_kept
+    return "\n".join(similar_chunks)

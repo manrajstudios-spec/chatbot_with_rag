@@ -156,7 +156,6 @@ def insert_doc():
     if not filepath:
         print("No file selected")
     else:
-        with_summary = False
         ask_with_summary = ask_user("Do You Want To Save Summary of doc OR actual doc (Press 0 for Actual 1 For Summary) (Note Summaries can be Wrong Or might not cover details): ")
 
         if ask_with_summary == "0":
@@ -166,46 +165,55 @@ def insert_doc():
 
         add_doc(filepath,with_summary)
 
+
 def make_chunks(t):
-    paras = t.split("\n")
-    chunks = []
     max_limit = 2000
     min_limit = 1700
-    cur_chunk = ""
     n = 2
+    chunks = []
+    stack = [t]
+    cur_chunk = ""
+    iterations = 0
 
-    for para in paras:
-        text = (cur_chunk if cur_chunk else "") + para
+    while stack:
 
-        if len(text) < min_limit:
-            cur_chunk += " " + para
-            continue
+        iterations += 1
 
-        if len(text) <= max_limit:
-            chunks.append(text)
+        if iterations > 10000:
+            raise RuntimeError("Chunking loop detected")
+        text = stack.pop()
+        paras = text.split("\n")
+        for para in paras:
+            combined = cur_chunk + " " + para
+
+            if len(combined) < min_limit:
+                cur_chunk = combined
+
+            elif len(combined) < max_limit:
+                chunks.append(combined)
+                cur_chunk = ""
+            else:
+                sentences = loader.make_sentences(combined)
+                total = 0
+                first_half = []
+                second_half = []
+
+                for i, sent in enumerate(sentences):
+                    total += len(sent)
+                    first_half.append(sent)
+
+                    if total >= min_limit:
+                        second_half.extend(first_half[-n:])
+                        second_half.extend(sentences[i + 1:])
+                        chunks.append(". ".join(first_half))
+                        cur_chunk = ". ".join(second_half)
+                        break
+
+        if cur_chunk:
+            if cur_chunk == text:
+                break
+            stack.append(cur_chunk)
             cur_chunk = ""
-        else:
-            splits = loader.nlp(text)
-            sentencez = [s.text.strip() for s in splits.sents]
-
-            count = 0
-            first_half = []
-            second_half = []
-
-            for i,sent in enumerate(sentencez):
-                if len(sent) + count >= max_limit:
-                    first_half.append(sent)
-                    second_half = first_half[-n:] + sentencez[i+1:]
-                    break
-                else:
-                    first_half.append(sent)
-                    count += len(sent)
-
-            chunks.append(" ".join(first_half))
-            cur_chunk = " ".join(second_half)
-
-    if cur_chunk:
-        chunks.extend(make_chunks(cur_chunk))
 
     return chunks
 
@@ -260,7 +268,7 @@ def add_doc(doc_path,with_summary=False):
 
     json_dict = {"file_name":file_name ,"npz_path":file_name_npz ,"doc_data":"\n ".join([i["summary"] for i in summaries]) if with_summary else "\n ".join([i for i in chunks])}
 
-    make_graph(np_embeddings,0.8,file_name)
+    make_graph(np_embeddings,file_name,True)
 
     write_json(json_dict)
 
@@ -376,6 +384,5 @@ def compare_msg(msg,loaded_docs,k):
                 similar_chunks.append(chunk)
 
         similar_chunks.append("Next Doc Data Starts Here: ")
-
 
     return "\n".join(similar_chunks)

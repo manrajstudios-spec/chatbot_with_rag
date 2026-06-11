@@ -1,7 +1,8 @@
+import loader
+from router import route_msg
 from retrieving_clf import get_result
 from rag_system import add_turn,get_matches
 from doc_reader import load_docs,unload_docs,compare_msg
-import loader
 
 sys_prompt = """
 YOU ARE “YUZU”, A CLOSE FEMALE BEST FRIEND OF THE USER (MANRAJ).
@@ -45,7 +46,7 @@ YOU ARE A REAL HUMAN TEXTING CASUALLY.
 
 """
 
-n = 4
+n = 20
 sys = {"role": "system", "content": sys_prompt}
 exchanges = []
 
@@ -93,10 +94,12 @@ while True:
             loaded_docs = unload_docs(loaded_docs)
             continue
 
-        if not loaded_docs:
-            if retrieve_summary(user_input):
-                summary,facts = get_matches(user_input,10)
+        ask,searched_info,topics = route_msg(user_input)
+        search_query = f"""The following information was retrieved from recent web searches. Use it as your primary source of truth when relevant. This information may be more up-to-date than your internal knowledge.
+        {searched_info} """ if searched_info else ""
 
+        if not loaded_docs:
+            summary,facts = get_matches(user_input,4,topics)
 
             print(f"DEBUG {summary} \nFacts: {facts}")
 
@@ -120,13 +123,14 @@ while True:
             result = memory_prompt if summary else ""
 
             temp_hist.append(sys)
-            temp_hist.append({"role": "system", "content": result})
+            temp_hist.append({"role": "system", "content": result + "\n" + search_query})
         else:
             relevant_info = compare_msg(user_input,loaded_docs,10)
             print(f"DEBUG {relevant_info}")
+
             doc_data = f"This Info Is Retrieved From Relevant Docs According To Users Query {relevant_info}"
             temp_hist.append(sys)
-            temp_hist.append({"role":"system", "content": doc_data})
+            temp_hist.append({"role":"system", "content": doc_data + "\n" + search_query})
 
         exchanges.append({"role":"user","content":user_input})
         temp_hist.extend(exchanges)

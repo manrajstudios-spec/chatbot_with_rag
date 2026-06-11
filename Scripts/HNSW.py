@@ -1,74 +1,103 @@
-import numpy as np
+import heapq
 import pickle
+import numpy as np
 
-def make_graph(all_embeds,threshold,name):
+path_graph = "../Data/Graph/hnsw_data.pickle"
+
+def load_data():
+    try:
+        with open(path_graph, "rb") as f:
+            return pickle.load(f)
+    except (FileNotFoundError, EOFError, pickle.UnpicklingError):
+        return []
+
+def save_data(data):
+    with open(path_graph, "wb") as f:
+        pickle.dump(data, f)
+
+def make_graph(all_embeds, name, save):
+    all_embeds = np.array(all_embeds, dtype=np.float32)
+
+    if all_embeds.ndim == 1:
+        all_embeds = all_embeds[None, :]
+
+    all_embeds = np.array(all_embeds, dtype=np.float32)
+    norms = np.linalg.norm(all_embeds, axis=1, keepdims=True)
+    norm_all = all_embeds / np.clip(norms, 1e-8, None)
+
     graph = {}
 
-    for i,x in enumerate(all_embeds):
-        similar = []
+    for i, x in enumerate(norm_all):
+        sim = norm_all @ x
+        sim[i] = -np.inf
 
-        for k,y in enumerate(all_embeds):
-            if i == k: continue
+        k = min(8, len(sim) - 1)
+        neighbors = np.argpartition(sim, -k)[-k:]
+        neighbors = neighbors[np.argsort(sim[neighbors])[::-1]]
+        graph[i] = neighbors.tolist()
 
-            similarity = np.dot(x,y)/(np.linalg.norm(x) * np.linalg.norm(y))
-            if similarity > threshold:
-                similar.append(k)
+    mean = np.mean(norm_all, axis=0)
+    mean_norm = np.linalg.norm(mean)
 
-        graph[i] = similar
+    if mean_norm > 1e-8:
+        mean /= mean_norm
 
-    data = []
-    with open("../Data/Graph/hnsw_data.pickle","rb") as f:
-        data = pickle.load(f)
+    center_node = int(np.argmax(norm_all @ mean))
 
-    if data:
-        found = False
+    if save:
+        data = load_data()
 
-        for i,d in enumerate(data):
+        for idx, d in enumerate(data):
             if d["name"] == name:
-                data[i] = {"name":name,"graph":graph}
-                found = True
-        if not found:
-            data.append({"name": name, "graph": graph})
-    else:
-        data.append({"name":name,"graph":graph})
+                data[idx] = {"name": name,"graph": graph,"center_node": center_node}
+                break
+        else:
+            data.append({"name": name,"graph": graph,"center_node": center_node})
 
-    with open("../Data/Graph/hnsw_data.pickle","wb") as f:
-        pickle.dump(data,f)
+        save_data(data)
 
-    return graph
+    return graph, center_node
 
-def check_graph(query_embed,all_embeds,graph,threshold):
+def check_graph(query_embed, all_embeds, graph, threshold, start):
     similar = []
     visited = set()
-    pile = [0]
 
-    while pile:
-        cur_id = pile.pop()
+    norm_query = query_embed / np.linalg.norm(query_embed)
+    norm_all = all_embeds / np.linalg.norm(all_embeds,axis=1,keepdims=True)
+    start_sim = float(norm_query @ norm_all[start])
+
+    heap = [(-start_sim, start)]
+    heapq.heapify(heap)
+
+    while heap:
+        n_similarity, cur_id = heapq.heappop(heap)
+
         if cur_id in visited:
             continue
 
-        cur_e = all_embeds[cur_id]
         visited.add(cur_id)
-        sim = np.dot(query_embed,cur_e)/(np.linalg.norm(query_embed)*np.linalg.norm(cur_e))
+        sim = -n_similarity
 
-        if sim>0.96:
+        if sim > threshold:
             similar.append(cur_id)
-            for n in graph[cur_id]:
-                if n not in visited:
-                    pile.append(n)
+
+        for neighbor in graph[cur_id]:
+            if neighbor not in visited:
+                neighbor_sim = float(norm_query @ norm_all[neighbor])
+                heapq.heappush(heap,(-neighbor_sim, neighbor))
+
     return similar
 
-def compare_embed(all_embeds,query_embed,name,threshold):
-    data = []
+def compare_embed(all_embeds, query_embed, name, threshold):
+    data = load_data()
+    start = 0
     graph = {}
 
-    with open("../Data/Graph/hnsw_data.pickle","rb") as f:
-        data = pickle.load(f)
-
-    for d in data:
+    for idx, d in enumerate(data):
         if d["name"] == name:
             graph = d["graph"]
+            start = d["center_node"]
 
-    similar = check_graph(query_embed,all_embeds,graph,threshold)
-
-    return similar
+    if graph is None:
+        graph = make_graph(all_embeds, threshold, name, save=True)
+    return check_graph(query_embed, all_embeds, graph, threshold,start)

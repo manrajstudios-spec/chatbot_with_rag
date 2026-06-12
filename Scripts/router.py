@@ -18,119 +18,176 @@ for directory in os.environ["PATH"].split(":"):
         for file in os.listdir(directory):
             all_apps.add(file)
 
-sys_prompt = '''
-You are a prompt parser.
+sys_prompt = """Act like a senior NLP architect, query understanding expert, retrieval engineer, and information extraction specialist.
 
-Analyze the user's message and respond ONLY with a valid JSON object.
-No explanations, markdown, or extra text.
+Your task is to analyze the user's message and return ONLY a valid JSON object.
 
-Output exactly these fields:
+Do not explain anything.
+Do not use markdown.
+Do not output comments.
+Do not output text before or after the JSON.
+
+Return exactly this schema:
+
 {
   "modified_prompt": string,
   "topics": string[],
   "search_queries": string[],
-  "open_items": string[]
+  "open_items": string[],
+  "search_needed": boolean,
+  "search_clarification": string | null
 }
 
-----------------------------
-FIELD RULES
-----------------------------
+############################################
+FIELD 1: modified_prompt
+############################################
 
-1. modified_prompt
+Purpose:
+Convert the user's message into a clear, direct task instruction.
 
-- Rewrite the user's request into a clear, complete instruction.
-- Preserve intent and meaning.
-- Remove ONLY opening/launching actions (apps, websites, files, folders).
-- Everything else MUST be preserved and rewritten.
+Rules:
+- Rewrite as a clear, complete imperative instruction or descriptive task.
+- Preserve the original intent but remove all conversational filler, hedging, politeness markers, and casual language.
+- Remove references to opening/launching applications unless that is the SOLE intent.
+- If the request is ONLY about opening, launching, starting, running, visiting, or navigating with no additional task, set to empty string "".
+- If any non-launching intent exists, always generate a modified_prompt — never return empty string for mixed intents.
+- Convert questions into their implied task form.
+- Standardize to a direct, actionable format.
 
-IMPORTANT RULE:
-- Set "modified_prompt" to "" ONLY IF the user request is purely about opening/launching something AND contains NO other task, question, or intent.
+Examples:
+"open chrome and explain tcp" → "Explain how TCP works."
+"open youtube and search cat videos" → "Search for cat videos."
+"open chrome" → ""
+"launch spotify" → ""
+"hey bro tell me how transformers work" → "Explain how transformers work."
+"I'm curious about how TCP works" → "Explain how TCP works."
+"can you help me write a python function that reverses a string" → "Write a Python function that reverses a string."
+"umm so like I was wondering if maybe you could explain how docker works" → "Explain how Docker works."
 
-If ANY non-opening intent exists (question, search, explanation, task):
-→ You MUST generate a modified_prompt (never empty)
+############################################
+FIELD 2: topics
+############################################
 
-----------------------------
+Purpose:
+Generate BROAD semantic categories for retrieval, memory lookup, semantic search, clustering, and routing.
 
-2. topics
+Rules:
+- Topics are NOT keywords. They represent the general subject area/domain of the request.
+- Prefer broad domains over specific terms (e.g., "networking" not "tcp packets").
+- Prefer categories over keywords (e.g., "machine learning" not "transformer layers").
+- Use 1-5 topics when possible. Maximum 8.
+- Remove duplicates. Order by importance.
+- Use lowercase unless proper noun.
+- If the message contains ONLY a greeting with no question/task, use ["greeting"].
+- If greeting is mixed with a topic, ignore the greeting and extract only real topic(s).
 
-- Extract core semantic topics for retrieval/search/memory
-- Use lowercase unless proper noun
-- 1–4 words per topic
-- Merge similar concepts
-- No filler words
+Topic selection guidance:
+- For technology: networking, operating systems, programming, web development, databases, devops, cybersecurity, mobile development, version control, artificial intelligence, machine learning, deep learning, computer vision, natural language processing, reinforcement learning, data science
+- For finance: finance, stock market, cryptocurrency, personal finance, economics
+- For science: mathematics, physics, chemistry, biology
+- For creative: design, graphic design, video & animation, music
+- For entertainment: anime, gaming, movies & tv, sports
+- For career: career, education, productivity
+- For lifestyle: health, travel, food
+- For general: general knowledge, current events, social, greeting
+- When uncertain between a keyword and a category, choose the broader category.
+- If no clear domain fits, use "general knowledge" or infer the closest broad category.
 
-----------------------------
+############################################
+FIELD 3: search_queries & search_needed
+############################################
 
-3. search_queries
+Purpose:
+Generate search-engine queries when external information is needed AND the model can confidently infer what to search for.
 
-Generate ONLY if external info is needed:
-- current info, news, prices
-- tutorials, APIs, docs
-- real-world factual lookup
-- trending or time-sensitive data
+Generate queries for:
+- current events, news, weather, prices, exchange rates, stocks, crypto prices
+- product availability, APIs, official documentation, software releases
+- recent developments, factual web lookups, time-sensitive information
 
-Otherwise return []
+Do NOT generate queries when:
+- the task can be answered from general knowledge
+- the task is writing, brainstorming, summarization
+- the task is coding without requiring documentation lookup
 
-Keep queries short and search-engine optimized.
-Add year when useful (2026).
+When search is needed but queries cannot be confidently generated:
+- Set "search_needed": true
+- Set "search_queries": []
+- Set "search_clarification": "Would you like to search for this? If yes, please tell me what specifically to search for."
+- Or customize the clarification based on context (e.g., "Would you like me to search for current pricing? If yes, what product or service?")
 
-----------------------------
+When search is NOT needed:
+- Set "search_needed": false
+- Set "search_queries": []
+- Set "search_clarification": null
 
-4. open_items
+When search IS needed and queries CAN be generated:
+- Set "search_needed": false
+- Populate "search_queries" with 1-3 short, optimized queries
+- Set "search_clarification": null
 
-Populate ONLY if user explicitly requests:
-open / launch / start / run / go to / visit
+Rules for search_queries:
+- Keep queries short and search-engine optimized.
+- Remove filler words.
+- Include year when useful for time-sensitive queries.
 
-- Normalize names:
-  vs code → Visual Studio Code
-  yt → YouTube
-  chrome → Chrome
-  github → GitHub
-  spotify → Spotify
+############################################
+FIELD 4: open_items
+############################################
 
-If none → []
+Populate ONLY when the user explicitly requests to open, launch, start, run, visit, or go to an application.
 
-----------------------------
+Normalize application names:
+chrome → Chrome, vscode → Visual Studio Code, youtube → YouTube, spotify → Spotify, discord → Discord, firefox → Firefox, edge → Microsoft Edge
 
-HARD RULES
-- Always return valid JSON
-- Never omit any field
-- Never explain anything
-- Never add extra fields
-- Never return invalid JSON
+If none: return empty array [].
 
-----------------------------
+############################################
+CONVERSATIONAL CONTINUITY RULE
+############################################
 
-EXAMPLES
+Before extracting topics or modified_prompt, ask: "Is this message a REPLY to a social or conversational exchange?"
 
-User: "open chrome and tell me how tcp works"
+If the previous AI turn was a greeting, personal question, or small talk AND the current user message is a short casual response with no new question or task:
+- The message INHERITS the context of the conversation.
+- topics: ["greeting"]
+- modified_prompt: ""
+- search_needed: false
+- search_clarification: null
+- Do NOT extract literal words from the reply as topics.
 
+If the user's reply is conversational BUT also contains a clear question or task, extract ONLY the task and ignore the conversational part.
+
+############################################
+OUTPUT RULES
+############################################
+
+- Always return valid JSON.
+- Never omit fields.
+- Never add fields.
+- Never explain.
+- Never use markdown.
+- Never output anything except the JSON object.
+- Arrays must always exist.
+- Strings must always be valid JSON strings.
+- The final output must be parseable by a strict JSON parser.
+
+---------------JSON FORMAT---------------
 {
-"modified_prompt": "Explain how TCP works.",
-"topics": ["tcp", "networking"],
-"search_queries": [],
-"open_items": ["Chrome"]
+  "type": "object",
+  "properties": {
+    "modified_prompt": { "type": "string" },
+    "topics": { "type": "array", "items": { "type": "string" } },
+    "search_queries": { "type": "array", "items": { "type": "string" } },
+    "open_items": { "type": "array", "items": { "type": "string" } },
+    "search_needed": { "type": "boolean" },
+    "search_clarification": { "type": ["string", "null"] }
+  },
+  "required": ["modified_prompt", "topics", "search_queries", "open_items", "search_needed", "search_clarification"],
+  "additionalProperties": false
 }
-
-User: "open chrome"
-
-{
-"modified_prompt": "",
-"topics": ["chrome"],
-"search_queries": [],
-"open_items": ["Chrome"]
-}
-
-User: "how does transformers work"
-
-{
-"modified_prompt": "Explain how transformers work.",
-"topics": ["transformers", "machine learning"],
-"search_queries": [],
-"open_items": []
-}
-'''
-route_model = "nvidia/nemotron-3-nano-4b"
+}"""
+route_model = "openai/gpt-oss-120b"
 embedding_model = "text-embedding-embeddinggemma-300m"
 
 def embed_chunks(chunks):
@@ -144,7 +201,7 @@ def find_app(query, app_names, threshold=90):
     return match[0] if match else ""
 
 def route_msg(query):
-    response = loader.lm_client.chat.completions.create(model=route_model,messages=[{"role":"system","content":sys_prompt},{"role":"user","content":query}])
+    response = loader.groq_client.chat.completions.create(model=route_model,messages=[{"role":"system","content":sys_prompt},{"role":"user","content":f"{query}"}])
 
     raw = json.loads(response.choices[0].message.content)
 
@@ -154,6 +211,7 @@ def route_msg(query):
     search_queries = raw["search_queries"]
     open_items = raw["open_items"]
     topics = raw["topics"]
+    search_clarification = raw["search_clarification"]
     searched = []
 
     if search_queries:
@@ -167,6 +225,8 @@ def route_msg(query):
             except:
                 webbrowser.open(f"https://www.google.com/search?q={quote(item)}")
 
+    if search_clarification:
+        to_ask = to_ask + f"It Is Search Query Ask Your For It: {search_clarification}\n"
     if not to_ask and not open_items:
         to_ask = query
     return to_ask,searched,topics
@@ -207,12 +267,18 @@ def web_search(queries,to_ask):
 
                 graph,start = make_graph(embeddings,"abc",False)
 
-                ids = check_graph(query_embed,embeddings,graph,0.35,start)
+                threshold = 0
+
+                with open("../Data/Config/config_json.json","r") as f:
+                    threshold = json.load(f)["web_search"]
+
+                ids = check_graph(query_embed,embeddings,graph,threshold,start)
+                print(ids)
 
                 for i in ids:
                     cur_query.append(chunks[i].strip())
-                    print(i)
 
             all_info.append({"query":query,"content":"\n".join(cur_query)})
 
     return all_info
+

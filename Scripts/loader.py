@@ -3,9 +3,11 @@ import  spacy
 from openai import OpenAI
 from dotenv import load_dotenv
 from transformers import AutoTokenizer,AutoModelForSequenceClassification
+from keybert import KeyBERT
 
 load_dotenv()
 
+ky = KeyBERT()
 api_key = os.getenv("groq")
 
 nlp = spacy.load('en_core_web_sm')
@@ -21,3 +23,7 @@ lm_client = OpenAI(base_url="http://127.0.0.1:1234/v1", api_key="lm_studio")
 def make_sentences(text):
     sents = nlp(text).sents
     return [s.text.strip() for s in sents]
+
+def extract_keywords(text):
+    keys = ky.extract_keywords(text,stop_words="english",use_mmr=True)
+    return [key[0] for key in keys]

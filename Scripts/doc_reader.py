@@ -253,13 +253,13 @@ def add_doc(doc_path,with_summary=False):
                 key_words.append(summary["key_words"])
     else:
         for chunk in chunks:
-            kw = loader.extract_key_words(chunk)
+            kw = loader.extract_keywords(chunk)
             key_words.extend(kw)
             e = get_embedding(chunk + f"Keywords: {", ".join(kw)}")
             embeddings.append(e)
 
     np_keywords = np.array(key_words,dtype=object)
-    print(np_keywords)
+
     np_embeddings = np.array(embeddings,dtype=np.float32)
 
     file_name_npz = f"../Data/docs/npz_files/{file_name}.npz"

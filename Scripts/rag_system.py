@@ -57,19 +57,89 @@ Example facts:
 - "User is learning machine learning"
 - "Interested in anime isekai"
 
-3. topics
-- Replace keywords with HIGH-LEVEL semantic topics
-- Must be generalized, not raw words
-- Keep 1–4 words per topic
-- Merge similar concepts into one topic
-- Avoid duplicates
+############################################
+topics
+############################################
 
-Examples:
-Bad: ["ai", "machine learning", "ml", "python coding"]
-Good: ["machine learning", "python", "AI development"]
+Purpose:
+Generate BROAD semantic categories for retrieval, memory lookup, semantic search, clustering, and routing.
 
-Bad: ["anime", "isekai anime", "watch anime"]
-Good: ["anime", "isekai"]
+Rules:
+- Topics are NOT keywords. They represent the general subject area/domain of the request.
+- Prefer broad domains over specific terms (e.g., "networking" not "tcp packets").
+- Prefer categories over keywords (e.g., "machine learning" not "transformer layers").
+- Use 1-5 topics when possible. Maximum 8.
+- Remove duplicates. Order by importance.
+- Use lowercase unless proper noun.
+- If the message contains ONLY a greeting with no question/task, use ["greeting"].
+- If greeting is mixed with a topic, ignore the greeting and extract only real topic(s).
+
+Topic selection guidance:
+- For technology: networking, operating systems, programming, web development, databases, devops, cybersecurity, mobile development, version control, artificial intelligence, machine learning, deep learning, computer vision, natural language processing, reinforcement learning, data science
+- For finance: finance, stock market, cryptocurrency, personal finance, economics
+- For science: mathematics, physics, chemistry, biology
+- For creative: design, graphic design, video & animation, music
+- For entertainment: anime, gaming, movies & tv, sports
+- For career: career, education, productivity
+- For lifestyle: health, travel, food
+- For general: general knowledge, current events, social, greeting
+- When uncertain between a keyword and a category, choose the broader category.
+- If no clear domain fits, use "general knowledge" or infer t
+
+############################################
+TOPIC SELECTION EXAMPLES
+############################################
+
+"explain tcp"
+→ ["networking"]
+
+"how do transformers work in ml"
+→ ["machine learning", "deep learning"]
+
+"best isekai anime"
+→ ["anime"]
+
+"train a cnn on images"
+→ ["deep learning", "computer vision"]
+
+"docker compose tutorial"
+→ ["devops"]
+
+"bitcoin price today"
+→ ["cryptocurrency"]
+
+"how to crack a faang interview"
+→ ["career", "programming"]
+
+"explain backpropagation"
+→ ["deep learning"]
+
+"what is inflation"
+→ ["economics"]
+
+"hi"
+→ ["greeting"]
+
+"hey bro"
+→ ["greeting"]
+
+Bad:
+["tcp", "packets", "three-way handshake"]
+
+Good:
+["networking"]
+
+Bad:
+["transformers", "attention", "layers"]
+
+Good:
+["machine learning", "deep learning"]
+
+Bad:
+["naruto", "anime fights", "jutsu"]
+
+Good:
+["anime"]
 
 SIMPLIFIED GOAL
 Convert each exchange into clean, structured, searchable memory that is optimized for retrieval systems and embeddings.
@@ -78,7 +148,7 @@ complex_rag = sqlite3.connect("../Data/chat_data/complex_rag.db")
 cursor_complex_rag = complex_rag.cursor()
 
 cursor_complex_rag.execute("CREATE TABLE IF NOT EXISTS master_table("
-                           "tables_name TEXT PRIMARY KEY, group_embeddings BLOB,count INT,key_words TEXT"
+                           "tables_name TEXT PRIMARY KEY, group_embeddings BLOB,count INT,topics TEXT"
                            ");")
 def as_matrix(x):
     x = np.array(x, dtype=np.float32)
@@ -98,10 +168,13 @@ def write_facts(facts):
         json.dump(facts, f,indent=4)
 
 def get_summary(hist):
+    all = []
     msg = ""
     for i,m in enumerate(hist):
         if i % 2 == 0:
             msg += f"{i+1}: User: {m} \nASSISTANT: {hist[i+1]}"
+            summ = f"{i+1}: {m} \nASSISTANT: {hist[i+1]} \n\n"
+            all.append(summ)
 
     facts_msg = f"""\nOld Facts = {", ".join(load_facts())}
 These are Old Facts Modify Them Or Delete Un usable Facts and give new facts containing older facts 
@@ -109,7 +182,7 @@ If none exist, use []"""
 
     response = loader.groq_client.chat.completions.create(model=summary_model, messages=[{"role": "system", "content":sys_prompt+ facts_msg}, {"role": "user", "content":msg}])
     raw = response.choices[0].message.content.strip()
-    return json.loads(raw)
+    return json.loads(raw),all
 
 def get_embedding(summary):
     response = loader.lm_client.embeddings.create(model=embeddings_model, input=summary)
@@ -129,11 +202,12 @@ def add_new_group(summary,embedding,topics):
     complex_rag.commit()
 
 def add_turn(hist):
-    results = get_summary(hist)
+    results,all = get_summary(hist)
     f = []
     for r in results:
         print("Initiated Save")
         summary = r["summary"]
+        summary = all
         facts = r['facts']
         cur_topics = r["topics"]
         f = facts
@@ -192,8 +266,12 @@ def compare_embedding_master_table(embedding, k):
     norms = np.where(norms == 0, 1e-9, norms)
 
     similarity = (embeddings @ embedding) / norms
-    threshold = 0.7
+    threshold = 0
 
+    with open("../Data/Config/config_json.json", "r") as f:
+        threshold = json.load(f)["master_tabel_threshold"]
+
+    print(f"sims_master: {similarity}")
     similarity_ids = similarity.argsort()[::-1]
     selected = [i for i in similarity_ids[:min(k, len(similarity_ids))] if similarity[i] > threshold]
 
@@ -213,7 +291,10 @@ def compare_embed_group(group_name, u_e):
 
     u_e = np.array(u_e, dtype=np.float32)
 
-    threshold = 0.5
+    threshold = 0
+
+    with open("../Data/Config/config_json.json", "r") as f:
+        threshold = json.load(f)["within_tabel"]
 
     ids = compare_embed(embeddings,u_e,group_name,threshold)
     print(f"ids: {ids}")

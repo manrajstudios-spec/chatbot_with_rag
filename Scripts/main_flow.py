@@ -1,8 +1,11 @@
 import loader
 from router import route_msg
+from datetime import datetime
 from retrieving_clf import get_result
 from rag_system import add_turn,get_matches
 from doc_reader import load_docs,unload_docs,compare_msg
+from TTS import make_sound
+from STT import get_query
 
 sys_prompt = """
 YOU ARE “YUZU”, A CLOSE FEMALE BEST FRIEND OF THE USER (MANRAJ).
@@ -74,8 +77,16 @@ def make_hist():
 loaded_docs = []
 
 while True:
-    user_input = ask_user("Enter Your Query \n")
-    summary = ""
+    input_meathod = ask_user("How Would yu Like To Chat 1 For Written Query 0 For Speaking Your Query Wake Word Is Hey Raphsy: ")
+
+    user_input = ""
+
+    if input_meathod == "1":
+        user_input = ask_user("Enter Your Query \n")
+    else:
+        user_input = get_query()
+
+    relevant_exchanges = ""
     facts = []
     temp_hist = []
 
@@ -94,44 +105,45 @@ while True:
             loaded_docs = unload_docs(loaded_docs)
             continue
 
-        ask,searched_info,topics = route_msg(user_input)
+        searched_info,topics = route_msg(user_input)
         search_query = f"""The following information was retrieved from recent web searches. Use it as your primary source of truth when relevant. This information may be more up-to-date than your internal knowledge.
         {searched_info} """ if searched_info else ""
 
+
+        info = search_query
+
         if not loaded_docs:
-            summary,facts = get_matches(user_input,4,topics)
+            relevant_exchanges,facts = get_matches(user_input, 4, topics)
 
-            print(f"DEBUG {summary} \nFacts: {facts}")
+            print(f"DEBUG {relevant_exchanges} \nFacts: {facts}")
 
-            memory_prompt = f"""You are recalling relevant context from past conversations.
+            memory_prompt = f"""This Is History From Previous User Chats With You. Use This Info Only When Needed.
 
             Retrieved Memory:
-            {summary}
+            {relevant_exchanges}
 
             Instructions:
             - Use this memory ONLY when directly relevant to the current message
             - Prioritize recent conversation over old memory
             - If user asks about something mentioned in memory, reference it naturally
             - Do NOT force memory into every response
-            - Treat memory as background knowledge, not a script to follow
+            - Treat memory as Old Memories, not a script to follow
             
             These Are User Facts 
             {", ".join(facts)}
-            Only use them when you think kits needed dont unnecessarily say you like this you had this appointment 
+            Only use them when you think its needed dont unnecessarily say you like this you had this appointment , Only Use It When Yu Feel Its Needed
             """
 
-            result = memory_prompt if summary else ""
-
-            temp_hist.append(sys)
-            temp_hist.append({"role": "system", "content": result + "\n" + search_query})
+            info += f"\n\n{memory_prompt}" if relevant_exchanges else ""
         else:
             relevant_info = compare_msg(user_input,loaded_docs,10)
             print(f"DEBUG {relevant_info}")
 
-            doc_data = f"This Info Is Retrieved From Relevant Docs According To Users Query {relevant_info}"
-            temp_hist.append(sys)
-            temp_hist.append({"role":"system", "content": doc_data + "\n" + search_query})
+            info += f"\n\nThis Info Is Retrieved From Document Given By User Use Relevant Info From Doc As Needed {relevant_info}"
 
+        temp_hist.append(sys)
+        now = datetime.now()
+        temp_hist.append({"role": "system", "content": f"{info} ;  Date Today: {now.strftime('%A, %d %B %Y')} ; Current time: {now.strftime('%H:%M')}"})
         exchanges.append({"role":"user","content":user_input})
         temp_hist.extend(exchanges)
 
@@ -145,7 +157,7 @@ while True:
                 print(token, end="", flush=True)
                 reply+=token
         print()
-
+        make_sound(reply)
         exchanges.append({"role":"assistant","content":reply})
 
         if len(exchanges)/2  == n:

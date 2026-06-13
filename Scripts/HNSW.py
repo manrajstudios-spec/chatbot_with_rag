@@ -76,6 +76,7 @@ def check_graph(query_embed, all_embeds, graph, threshold, start):
             continue
 
         visited.add(cur_id)
+        print(f"sim centre: {n_similarity}")
         sim = -n_similarity
 
         if sim > threshold:
@@ -84,6 +85,7 @@ def check_graph(query_embed, all_embeds, graph, threshold, start):
         for neighbor in graph[cur_id]:
             if neighbor not in visited:
                 neighbor_sim = float(norm_query @ norm_all[neighbor])
+                print(f"neighbour: {neighbor_sim}")
                 heapq.heappush(heap,(-neighbor_sim, neighbor))
 
     return similar

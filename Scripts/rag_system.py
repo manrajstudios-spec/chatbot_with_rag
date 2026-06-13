@@ -4,14 +4,13 @@ import loader
 import sqlite3
 import numpy as np
 from HNSW import compare_embed,make_graph
+from datetime import datetime
 
 summary_model = "openai/gpt-oss-120b"
 embeddings_model = "text-embedding-embeddinggemma-300m"
 
 sys_prompt = '''
 You are a conversation memory summarizer.
-
-Your job is to convert each conversation exchange into structured JSON for long-term memory storage and retrieval.
 
 IMPORTANT OUTPUT RULES
 - Output ONLY valid JSON
@@ -23,24 +22,14 @@ IMPORTANT OUTPUT RULES
 OUTPUT FORMAT (STRICT)
 Each item must follow exactly:
 {
-  "summary": "one sentence describing user intent and assistant action",
   "facts": ["clean atomic facts", "..."],
   "topics": ["high-level topics"]
 }
 
 FIELD RULES
-
-1. summary
-- Must be exactly ONE sentence
-- Must include:
-  - what the user wanted
-  - what the assistant did/responded with
-- Do not include unnecessary details
-- Do not merge multiple exchanges
-
-2. facts
+1. facts
 - Extract ONLY explicit, meaningful information
-- Must be short, atomic statements (no paragraphs)
+- Must be short (no paragraphs)
 - Normalize and fix typos (e.g. "pythn lerning" → "learning Python")
 - Include:
   - preferences
@@ -51,11 +40,6 @@ FIELD RULES
   - vague statements
   - conversational filler
   - redundant information
-
-Example facts:
-- "Groq free tier gives 14k requests per day"
-- "User is learning machine learning"
-- "Interested in anime isekai"
 
 ############################################
 topics
@@ -140,9 +124,6 @@ Bad:
 
 Good:
 ["anime"]
-
-SIMPLIFIED GOAL
-Convert each exchange into clean, structured, searchable memory that is optimized for retrieval systems and embeddings.
 '''
 complex_rag = sqlite3.connect("../Data/chat_data/complex_rag.db")
 cursor_complex_rag = complex_rag.cursor()
@@ -150,11 +131,6 @@ cursor_complex_rag = complex_rag.cursor()
 cursor_complex_rag.execute("CREATE TABLE IF NOT EXISTS master_table("
                            "tables_name TEXT PRIMARY KEY, group_embeddings BLOB,count INT,topics TEXT"
                            ");")
-def as_matrix(x):
-    x = np.array(x, dtype=np.float32)
-    if x.ndim == 1:
-        x = x[None, :]
-    return x
 
 def load_facts():
     try:
@@ -167,58 +143,59 @@ def write_facts(facts):
     with open("../Data/docs/facts.json", "w") as f:
         json.dump(facts, f,indent=4)
 
-def get_summary(hist):
+def rag_query(hist):
     all = []
     msg = ""
     for i,m in enumerate(hist):
         if i % 2 == 0:
             msg += f"{i+1}: User: {m} \nASSISTANT: {hist[i+1]}"
-            summ = f"{i+1}: {m} \nASSISTANT: {hist[i+1]} \n\n"
+            summ = f"{i+1}: User: {m} \nASSISTANT: {hist[i+1]}"
             all.append(summ)
 
     facts_msg = f"""\nOld Facts = {", ".join(load_facts())}
-These are Old Facts Modify Them Or Delete Un usable Facts and give new facts containing older facts 
+These are Old Facts Modify Them Or Delete Unusable Facts and give new facts containing older facts 
 If none exist, use []"""
 
-    response = loader.groq_client.chat.completions.create(model=summary_model, messages=[{"role": "system", "content":sys_prompt+ facts_msg}, {"role": "user", "content":msg}])
+    response = loader.groq_client.chat.completions.create(model=summary_model, messages=[{"role": "system", "content":sys_prompt + " " + facts_msg}, {"role": "user", "content":msg}])
     raw = response.choices[0].message.content.strip()
     return json.loads(raw),all
 
-def get_embedding(summary):
-    response = loader.lm_client.embeddings.create(model=embeddings_model, input=summary)
+def get_embedding(exchange):
+    response = loader.lm_client.embeddings.create(model=embeddings_model, input=exchange)
     return response.data[0].embedding
 
-def add_new_group(summary,embedding,topics):
+def add_new_group(exchange, embedding, topics,date):
     group_name = str(uuid.uuid4()).replace("-", "")
 
-    cursor_complex_rag.execute(f'CREATE TABLE "{group_name}"(id INTEGER PRIMARY KEY AUTOINCREMENT,summary TEXT,embedding BLOB,topics TEXT); ')
+    cursor_complex_rag.execute(f'CREATE TABLE "{group_name}"(id INTEGER PRIMARY KEY AUTOINCREMENT,exchange TEXT,embedding BLOB,topics TEXT,date TEXT); ')
     cursor_complex_rag.execute(
-        f'INSERT INTO "{group_name}" (summary, embedding,topics) VALUES (?, ?,?)',(summary, np.array(embedding, dtype=np.float32).tobytes(),"' ".join(topics)))
+        f'INSERT INTO "{group_name}" (exchange, embedding,topics,date) VALUES (?, ?,?,?)',(exchange, np.array(embedding, dtype=np.float32).tobytes(), "' ".join(topics),date))
     complex_rag.commit()
 
     cursor_complex_rag.execute("INSERT INTO master_table (tables_name, group_embeddings, count, topics) VALUES (?, ?, ?, ?)",(group_name, np.array(embedding, dtype=np.float32).tobytes(), 1, ", ".join(topics)))
 
-    make_graph(as_matrix([embedding]), group_name, True)
+    make_graph(np.array(embedding,dtype=np.float32), group_name, True)
     complex_rag.commit()
 
 def add_turn(hist):
-    results,all = get_summary(hist)
+    results,exchanges = rag_query(hist)
     f = []
-    for r in results:
+    for i, (result, exchange) in enumerate(zip(results, exchanges)):
         print("Initiated Save")
-        summary = r["summary"]
-        summary = all
-        facts = r['facts']
-        cur_topics = r["topics"]
-        f = facts
+        cur_exchange = exchange
+        f = result["facts"]
+        cur_topics = result["topics"]
 
-        summary += f"KeyWords: {", ".join(cur_topics)}"
-        embedding = np.array(get_embedding(summary), dtype=np.float32)
+        cur_exchange += f"\nTopics: {", ".join(cur_topics)}"
+        embedding = np.array(get_embedding(cur_exchange), dtype=np.float32).flatten()
         group_names = compare_embedding_master_table(embedding, 4)
+
+        now = datetime.now()
+        date = now.strftime('%A, %d %B %Y')
 
         if group_names:
             for name in group_names:
-                cursor_complex_rag.execute(f'INSERT INTO "{name}" (summary, embedding,topics) VALUES (?, ?,?)',(summary, np.array(embedding, dtype=np.float32).tobytes(),", ".join(cur_topics)))
+                cursor_complex_rag.execute(f'INSERT INTO "{name}" (exchange, embedding,topics,date) VALUES (?, ?,?,?)',(cur_exchange, np.array(embedding, dtype=np.float32).tobytes(),", ".join(cur_topics),date))
                 complex_rag.commit()
 
                 cursor_complex_rag.execute('SELECT count,topics,group_embeddings FROM master_table WHERE tables_name = ?', (name,))
@@ -227,32 +204,30 @@ def add_turn(hist):
                 count = row[0]
                 topics = row[1].split(", ")
                 mean = np.frombuffer(row[2],dtype=np.float32)
-
+                mean = np.array(mean,dtype=np.float32).flatten()
                 all_topics = list(set(topics + cur_topics))
 
-                new_mean = (mean * count + np.array(embedding, dtype=np.float32)) / (count + 1)
+                new_mean = (((mean * count) + embedding) / (count + 1))
 
                 cursor_complex_rag.execute(
                     'UPDATE master_table SET count=?, topics=?, group_embeddings=? WHERE tables_name=?',
-                    (count+1, ", ".join(all_topics), np.array(new_mean,dtype=np.float32).tobytes(), name))
+                    (count+1, ", ".join(all_topics),new_mean.tobytes(), name))
 
                 cursor_complex_rag.execute(f'SELECT embedding FROM "{name}"')
                 row = cursor_complex_rag.fetchall()
 
                 embeddings_all = [np.frombuffer(r[0],dtype=np.float32) for r in row]
-                make_graph(np.stack(embeddings_all,dtype=np.float32),name,True)
-
+                make_graph(np.array(embeddings_all,dtype=np.float32),name,True)
                 print(f"Old Group ")
 
         else:
-            add_new_group(summary,np.stack(embedding),cur_topics)
+            add_new_group(cur_exchange,embedding,cur_topics,date)
             print(f"New Group")
 
     write_facts(f)
 
 def compare_embedding_master_table(embedding, k):
     print("Getting matched Groups")
-    embedding = as_matrix(embedding)[0]
     cursor_complex_rag.execute("SELECT tables_name,group_embeddings FROM master_table")
     rows = cursor_complex_rag.fetchall()
 
@@ -261,7 +236,8 @@ def compare_embedding_master_table(embedding, k):
 
     names = [row[0] for row in rows]
 
-    embeddings = as_matrix([np.frombuffer(row[1], dtype=np.float32)for row in rows])
+    embeddings =[np.frombuffer(row[1], dtype=np.float32)for row in rows]
+    embeddings = np.array(embeddings,dtype=np.float32)
     norms = np.linalg.norm(embeddings, axis=1) * np.linalg.norm(embedding)
     norms = np.where(norms == 0, 1e-9, norms)
 
@@ -279,7 +255,7 @@ def compare_embedding_master_table(embedding, k):
 
 def compare_embed_group(group_name, u_e):
     print("Re ranking in groups")
-    cursor_complex_rag.execute(f'SELECT summary,embedding,topics FROM "{group_name}"')
+    cursor_complex_rag.execute(f'SELECT exchange,embedding,topics FROM "{group_name}"')
     rows = cursor_complex_rag.fetchall()
 
     if not rows:
@@ -287,9 +263,8 @@ def compare_embed_group(group_name, u_e):
 
     summaries = [row[0] for row in rows]
 
-    embeddings = as_matrix([np.frombuffer(row[1], dtype=np.float32)for row in rows])
-
-    u_e = np.array(u_e, dtype=np.float32)
+    embeddings = [np.frombuffer(row[1], dtype=np.float32)for row in rows]
+    embeddings = np.array(embeddings,dtype=np.float32)
 
     threshold = 0
 
@@ -303,6 +278,7 @@ def compare_embed_group(group_name, u_e):
 
 def get_matches(user,k,topics):
     embedding = get_embedding(user + f"Topics {topics}")
+    embedding = np.array(embedding,dtype=np.float32).flatten()
     matches = compare_embedding_master_table(embedding, k)
     summaries=set()
 

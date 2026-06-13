@@ -30,42 +30,14 @@ Do not output text before or after the JSON.
 Return exactly this schema:
 
 {
-  "modified_prompt": string,
   "topics": string[],
   "search_queries": string[],
   "open_items": string[],
-  "search_needed": boolean,
   "search_clarification": string | null
 }
 
 ############################################
-FIELD 1: modified_prompt
-############################################
-
-Purpose:
-Convert the user's message into a clear, direct task instruction.
-
-Rules:
-- Rewrite as a clear, complete imperative instruction or descriptive task.
-- Preserve the original intent but remove all conversational filler, hedging, politeness markers, and casual language.
-- Remove references to opening/launching applications unless that is the SOLE intent.
-- If the request is ONLY about opening, launching, starting, running, visiting, or navigating with no additional task, set to empty string "".
-- If any non-launching intent exists, always generate a modified_prompt — never return empty string for mixed intents.
-- Convert questions into their implied task form.
-- Standardize to a direct, actionable format.
-
-Examples:
-"open chrome and explain tcp" → "Explain how TCP works."
-"open youtube and search cat videos" → "Search for cat videos."
-"open chrome" → ""
-"launch spotify" → ""
-"hey bro tell me how transformers work" → "Explain how transformers work."
-"I'm curious about how TCP works" → "Explain how TCP works."
-"can you help me write a python function that reverses a string" → "Write a Python function that reverses a string."
-"umm so like I was wondering if maybe you could explain how docker works" → "Explain how Docker works."
-
-############################################
-FIELD 2: topics
+FIELD 1: topics
 ############################################
 
 Purpose:
@@ -94,7 +66,7 @@ Topic selection guidance:
 - If no clear domain fits, use "general knowledge" or infer the closest broad category.
 
 ############################################
-FIELD 3: search_queries & search_needed
+FIELD 2: search_queries
 ############################################
 
 Purpose:
@@ -132,7 +104,7 @@ Rules for search_queries:
 - Include year when useful for time-sensitive queries.
 
 ############################################
-FIELD 4: open_items
+FIELD 3: open_items
 ############################################
 
 Populate ONLY when the user explicitly requests to open, launch, start, run, visit, or go to an application.
@@ -176,17 +148,16 @@ OUTPUT RULES
 {
   "type": "object",
   "properties": {
-    "modified_prompt": { "type": "string" },
     "topics": { "type": "array", "items": { "type": "string" } },
     "search_queries": { "type": "array", "items": { "type": "string" } },
     "open_items": { "type": "array", "items": { "type": "string" } },
-    "search_needed": { "type": "boolean" },
     "search_clarification": { "type": ["string", "null"] }
   },
-  "required": ["modified_prompt", "topics", "search_queries", "open_items", "search_needed", "search_clarification"],
+  "required": ["topics", "search_queries", "open_items", "search_clarification"],
   "additionalProperties": false
 }
-}"""
+
+"""
 route_model = "openai/gpt-oss-120b"
 embedding_model = "text-embedding-embeddinggemma-300m"
 
@@ -201,13 +172,12 @@ def find_app(query, app_names, threshold=90):
     return match[0] if match else ""
 
 def route_msg(query):
-    response = loader.groq_client.chat.completions.create(model=route_model,messages=[{"role":"system","content":sys_prompt},{"role":"user","content":f"{query}"}])
+    response = loader.groq_client.chat.completions.create(model=route_model,messages=[{"role":"system","content":sys_prompt},{"role":"user","content":query}])
 
     raw = json.loads(response.choices[0].message.content)
 
     print(raw)
 
-    to_ask = raw["modified_prompt"]
     search_queries = raw["search_queries"]
     open_items = raw["open_items"]
     topics = raw["topics"]
@@ -215,7 +185,7 @@ def route_msg(query):
     searched = []
 
     if search_queries:
-        searched = web_search(search_queries,to_ask)
+        searched = web_search(search_queries,query)
 
     if open_items:
         for item in open_items:
@@ -225,11 +195,7 @@ def route_msg(query):
             except:
                 webbrowser.open(f"https://www.google.com/search?q={quote(item)}")
 
-    if search_clarification:
-        to_ask = to_ask + f"It Is Search Query Ask Your For It: {search_clarification}\n"
-    if not to_ask and not open_items:
-        to_ask = query
-    return to_ask,searched,topics
+    return searched,topics
 
 def web_search(queries,to_ask):
     all_info = []
@@ -273,7 +239,7 @@ def web_search(queries,to_ask):
                     threshold = json.load(f)["web_search"]
 
                 ids = check_graph(query_embed,embeddings,graph,threshold,start)
-                print(ids)
+                print(f"web ids: {ids}")
 
                 for i in ids:
                     cur_query.append(chunks[i].strip())

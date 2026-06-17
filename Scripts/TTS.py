@@ -1,34 +1,18 @@
 import os
 import asyncio
 import edge_tts
-import threading
-from playsound3 import playsound
+import subprocess
 
-sound = None
-
-def interrupt():
-    input()
-    if sound:
-        sound.stop()
-    if os.path.exists("temp.mp3"):
-        os.remove("temp.mp3")
-
+proc = None
 
 async def play_sound(text):
-    global sound
-
+    global proc
     cc = edge_tts.Communicate(text, voice="ja-JP-NanamiNeural")
     await cc.save("temp.mp3")
-
-    tt = threading.Thread(target=interrupt, daemon=True)
-    tt.start()
-
-    sound = playsound("temp.mp3", block=False)
-    sound.wait()
-
+    proc = subprocess.Popen(["ffplay", "-nodisp", "-autoexit", "-loglevel", "quiet", "temp.mp3"])
+    proc.wait()
     if os.path.exists("temp.mp3"):
         os.remove("temp.mp3")
-
 
 def make_sound(text):
     asyncio.run(play_sound(text))

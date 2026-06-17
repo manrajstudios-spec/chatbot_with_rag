@@ -371,7 +371,7 @@ def unload_docs(loaded_docs):
             loaded_docs.pop(int(u_i) - 1)
 
 def compare_msg(msg,loaded_docs,k):
-    key_words = loader.extract_key_words(msg)
+    key_words = loader.extract_keywords(msg)
     embedded_msg = np.array(get_embedding(msg + f"KeyWords: {", ".join(key_words)}"),dtype=np.float32).flatten()
 
     similar_chunks = []

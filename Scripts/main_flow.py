@@ -113,18 +113,15 @@ while True:
             if exchanges:
                 make_hist()
             break
-
-        if user_input == "n":
+        elif user_input == "n":
             loaded_docs = load_docs()
             if not loaded_docs:
                 console.print("[dim]Canceled Doc Referencing Process[/dim]")
             continue
-
-        if user_input == "r" and loaded_docs:
+        elif user_input == "r" and loaded_docs:
             loaded_docs = unload_docs(loaded_docs)
             continue
 
-        console.print(Panel(user_input, title="[bold cyan]You[/bold cyan]", border_style="cyan"))
 
         searched_info, topics = route_msg(user_input)
         search_query = f"""The following information was retrieved from recent web searches. Use it as your primary source of truth when relevant. This information may be more up-to-date than your internal knowledge.
@@ -178,8 +175,8 @@ while True:
                     reply += token
 
         console.print(Panel(reply, title="[bold green]Yuzu[/bold green]", border_style="green"))
-        make_sound(reply)
         exchanges.append({"role": "assistant", "content": reply})
+        make_sound(reply)
 
         if len(exchanges) / 2 == n:
             make_hist()

@@ -122,8 +122,8 @@ while True:
             loaded_docs = unload_docs(loaded_docs)
             continue
 
-
-        searched_info, topics = route_msg(user_input)
+        exchanges.append({"role": "user", "content": user_input})
+        searched_info, topics = route_msg(exchanges)
         search_query = f"""The following information was retrieved from recent web searches. Use it as your primary source of truth when relevant. This information may be more up-to-date than your internal knowledge.
         {searched_info} """ if searched_info else ""
 
@@ -162,7 +162,6 @@ while True:
         now = datetime.now()
         temp_hist.append({"role": "system",
                           "content": f"{info} ;  Date Today: {now.strftime('%A, %d %B %Y')} ; Current time: {now.strftime('%H:%M')}"})
-        exchanges.append({"role": "user", "content": user_input})
         temp_hist.extend(exchanges)
 
         with console.status("[dim]Yuzu is typing...[/dim]", spinner="dots"):
@@ -176,7 +175,7 @@ while True:
 
         console.print(Panel(reply, title="[bold green]Yuzu[/bold green]", border_style="green"))
         exchanges.append({"role": "assistant", "content": reply})
-        make_sound(reply)
+        # make_sound(reply)
 
         if len(exchanges) / 2 == n:
             make_hist()

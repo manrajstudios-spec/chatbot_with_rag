@@ -172,7 +172,9 @@ def find_app(query, app_names, threshold=90):
     return match[0] if match else ""
 
 def route_msg(query):
-    response = loader.groq_client.chat.completions.create(model=route_model,messages=[{"role":"system","content":sys_prompt},{"role":"user","content":query}])
+    msg = [{"role":"system","content":sys_prompt}]
+    msg.extend(query)
+    response = loader.groq_client.chat.completions.create(model=route_model,messages=msg)
 
     raw = json.loads(response.choices[0].message.content)
 
@@ -193,56 +195,55 @@ def route_msg(query):
             except:
                 webbrowser.open(f"https://www.google.com/search?q={quote(item)}")
 
-    return searched,topics
+    return searched[:5000],topics
 
-def web_search(queries,to_ask):
+def web_search(queries, to_ask):
     all_info = []
     query_embed = embed_chunks(to_ask)
     query_embed = np.array(query_embed, dtype=np.float32)
 
     for query in queries:
-        with DDGS() as search:
-            hits = list(search.text(query,max_results=2))
+        with console.status(f"[dim]Searching: {query}...[/dim]", spinner="dots"):
+            with DDGS() as search:
+                hits = list(search.text(query, max_results=2))
 
-            cur_query = []
+                cur_query = []
 
-            for hit in hits:
-                html = trafilatura.fetch_url(hit["href"])
-                if not html:
-                    all_info.append({"query":query,"content":hit["body"]})
-                    continue
+                for hit in hits:
+                    html = trafilatura.fetch_url(hit["href"])
+                    if not html:
+                        all_info.append({"query": query, "content": hit["body"]})
+                        continue
 
-                content = trafilatura.extract(html) or hit["body"]
+                    content = trafilatura.extract(html) or hit["body"]
 
-                if not content:
-                    continue
+                    if not content:
+                        continue
 
-                chunks = make_chunks(content)
+                    chunks = make_chunks(content)
 
-                if not chunks:
-                    continue
+                    if not chunks:
+                        continue
 
-                embeddings = []
+                    embeddings = []
 
-                for chunk in chunks:
-                    embeddings.append(embed_chunks(chunk.strip()))
+                    for chunk in chunks:
+                        embeddings.append(embed_chunks(chunk.strip()))
 
-                embeddings = np.array(embeddings,dtype=np.float32)
+                    embeddings = np.array(embeddings, dtype=np.float32)
 
-                graph,start = make_graph(embeddings,"abc",False)
+                    graph, start = make_graph(embeddings, "abc", False)
 
-                threshold = 0
+                    threshold = 0
 
-                with open("../Data/Config/config_json.json","r") as f:
-                    threshold = json.load(f)["web_search"]
+                    with open("../Data/Config/config_json.json", "r") as f:
+                        threshold = json.load(f)["web_search"]
 
-                ids = check_graph(query_embed,embeddings,graph,threshold,start)
-                console.print(f"[dim]web ids: {ids}[/dim]")
+                    ids = check_graph(query_embed, embeddings, graph, threshold, start)
 
-                for i in ids:
-                    cur_query.append(chunks[i].strip())
+                    for i in ids:
+                        cur_query.append(chunks[i].strip())
 
-            all_info.append({"query":query,"content":"\n".join(cur_query)})
+            all_info.append({"query": query, "content": "\n".join(cur_query)})
 
     return all_info
-

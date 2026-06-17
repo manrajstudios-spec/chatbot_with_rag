@@ -1,0 +1,5 @@
+[
+    "Attention lets models consider all words in a sentence simultaneously instead of processing sequentially like RNNs",
+    "This speeds up processing and resolves the forgetting problem for long contexts",
+    "Transformers stack multiple attention heads, outperforming RNN-based translation and other seq\u20112\u2011seq tasks"
+]

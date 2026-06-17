@@ -87,6 +87,7 @@ When search is needed but queries cannot be confidently generated:
 - Set "search_queries": []
 - Set "search_clarification": "Would you like to search for this? If yes, please tell me what specifically to search for."
 - Or customize the clarification based on context (e.g., "Would you like me to search for current pricing? If yes, what product or service?")
+- AT Max Yu Can Search For 1 Thing
 
 When search is NOT needed:
 - Set "search_needed": false
@@ -171,10 +172,12 @@ def find_app(query, app_names, threshold=90):
 
     return match[0] if match else ""
 
-def route_msg(query):
-    msg = [{"role":"system","content":sys_prompt}]
-    msg.extend(query)
-    response = loader.groq_client.chat.completions.create(model=route_model,messages=msg)
+def route_msg(p_exchanges,p_exchanges_text):
+    exchanges = [{"role":"system","content":sys_prompt}]
+
+    exchanges.extend(p_exchanges)
+
+    response = loader.groq_client.chat.completions.create(model=route_model,messages=exchanges)
 
     raw = json.loads(response.choices[0].message.content)
 
@@ -185,7 +188,7 @@ def route_msg(query):
     searched = []
 
     if search_queries:
-        searched = web_search(search_queries,query)
+        searched = web_search(search_queries, p_exchanges_text)
 
     if open_items:
         for item in open_items:
@@ -195,9 +198,12 @@ def route_msg(query):
             except:
                 webbrowser.open(f"https://www.google.com/search?q={quote(item)}")
 
-    return searched[:5000],topics
+    return searched[:4000],topics
 
 def web_search(queries, to_ask):
+    with open("../Data/Config/config_json.json", "r") as f:
+        threshold = json.load(f)["web_search"]
+
     all_info = []
     query_embed = embed_chunks(to_ask)
     query_embed = np.array(query_embed, dtype=np.float32)
@@ -216,7 +222,8 @@ def web_search(queries, to_ask):
                         continue
 
                     content = trafilatura.extract(html) or hit["body"]
-
+                    if len(content) > 5000:
+                        content = content[:4000]
                     if not content:
                         continue
 
@@ -233,11 +240,6 @@ def web_search(queries, to_ask):
                     embeddings = np.array(embeddings, dtype=np.float32)
 
                     graph, start = make_graph(embeddings, "abc", False)
-
-                    threshold = 0
-
-                    with open("../Data/Config/config_json.json", "r") as f:
-                        threshold = json.load(f)["web_search"]
 
                     ids = check_graph(query_embed, embeddings, graph, threshold, start)
 

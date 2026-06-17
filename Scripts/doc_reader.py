@@ -170,51 +170,44 @@ def insert_doc():
 def make_chunks(t):
     max_limit = 2000
     min_limit = 1700
-    n = 2
+    overlap = 2
+
+    sentences = loader.make_sentences(t)
     chunks = []
-    stack = [t]
-    cur_chunk = ""
-    iterations = 0
+    curr_chunk = []
+    curr_chunk_text = ""
 
-    while stack:
+    for i,sent in enumerate(sentences):
+        added = curr_chunk_text + "." + sent
 
-        iterations += 1
+        if len(added) < min_limit:
+            curr_chunk_text += f". {sent}"
+            curr_chunk.append(sent)
 
-        if iterations > 10000:
-            raise RuntimeError("Chunking loop detected")
-        text = stack.pop()
-        paras = text.split("\n")
-        for para in paras:
-            combined = cur_chunk + " " + para
+        elif len(added) < max_limit:
+            chunks.append(added)
+            curr_chunk.append(sent)
+            curr_chunk = curr_chunk[-overlap:]
+            curr_chunk_text = (". ").join(curr_chunk)
 
-            if len(combined) < min_limit:
-                cur_chunk = combined
+        else:
+            if i == len(sentences) - 1:
+                if len(sent) > 500:
+                    sent = sent[:500]
 
-            elif len(combined) < max_limit:
-                chunks.append(combined)
-                cur_chunk = ""
+                curr_chunk_text += ". " + sent
+                chunks.append(curr_chunk_text)
+                curr_chunk = []
+                curr_chunk_text = ""
             else:
-                sentences = loader.make_sentences(combined)
-                total = 0
-                first_half = []
-                second_half = []
+                chunks.append(curr_chunk_text)
+                curr_chunk = curr_chunk[-overlap:]
+                curr_chunk_text = (". ").join(curr_chunk)
+                curr_chunk.append(sent)
+                curr_chunk_text += f". {sent}"
 
-                for i, sent in enumerate(sentences):
-                    total += len(sent)
-                    first_half.append(sent)
-
-                    if total >= min_limit:
-                        second_half.extend(first_half[-n:])
-                        second_half.extend(sentences[i + 1:])
-                        chunks.append(". ".join(first_half))
-                        cur_chunk = ". ".join(second_half)
-                        break
-
-        if cur_chunk:
-            if cur_chunk == text:
-                break
-            stack.append(cur_chunk)
-            cur_chunk = ""
+    if curr_chunk_text:
+        chunks.append(curr_chunk_text)
 
     return chunks
 
@@ -370,7 +363,7 @@ def unload_docs(loaded_docs):
 
             loaded_docs.pop(int(u_i) - 1)
 
-def compare_msg(msg,loaded_docs,k):
+def compare_msg_doc(msg, loaded_docs, k):
     key_words = loader.extract_keywords(msg)
     embedded_msg = np.array(get_embedding(msg + f"KeyWords: {", ".join(key_words)}"),dtype=np.float32).flatten()
 

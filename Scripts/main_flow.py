@@ -7,8 +7,8 @@ from datetime import datetime
 from rich.panel import Panel
 from rich.prompt import Prompt
 from retrieving_clf import get_result
-from rag_system import add_turn, get_matches
-from doc_reader import load_docs, unload_docs, compare_msg
+from rag_system import add_turn, get_matches_rag
+from doc_reader import load_docs, unload_docs, compare_msg_doc
 
 sys_prompt = """
 YOU ARE ?YUZU?, A CLOSE FEMALE BEST FRIEND OF THE USER (MANRAJ).
@@ -58,6 +58,7 @@ exchanges = []
 speech = False
 meathod_selected = False
 
+last_msgs = 5
 
 def ask_user(input_msg):
     while True:
@@ -101,6 +102,9 @@ while True:
     user_input = ""
     if speech:
         user_input = get_query()
+
+        if not user_input:
+            continue
     else:
         user_input = ask_user("You")
 
@@ -123,40 +127,51 @@ while True:
             continue
 
         exchanges.append({"role": "user", "content": user_input})
-        searched_info, topics = route_msg(exchanges)
+        to_give = exchanges[0:max(last_msgs,len(exchanges))]
+
+        to_give_text = ""
+
+        for i in range(0,len(to_give),2):
+            to_give_text+= f"User: {to_give[i]}\n"
+
+            if i+1 < len(to_give):
+                to_give_text += f"Assistant: {to_give[i+1]}\n"
+
+        searched_info, topics = route_msg(to_give,to_give_text)
+
         search_query = f"""The following information was retrieved from recent web searches. Use it as your primary source of truth when relevant. This information may be more up-to-date than your internal knowledge.
         {searched_info} """ if searched_info else ""
 
         info = search_query
 
-        if not loaded_docs:
-            relevant_exchanges, facts = get_matches(user_input, 4, topics)
+        if loaded_docs:
+            relevant_info_doc = compare_msg_doc(user_input, loaded_docs, 10)
+            console.print(f"[dim]DEBUG {relevant_info_doc}[/dim]")
 
-            console.print(f"[dim]DEBUG {relevant_exchanges} \nFacts: {facts}[/dim]")
+            info += f"\n\nThis Info Is Retrieved From Document Given By User Use Relevant Info From Doc As Needed {relevant_info_doc}"
 
-            memory_prompt = f"""This Is History From Previous User Chats With You. Use This Info Only When Needed.
+        relevant_exchanges, facts = get_matches_rag(to_give_text, 4, topics)
 
-            Retrieved Memory:
-            {relevant_exchanges}
+        console.print(f"[dim]DEBUG {relevant_exchanges} \nFacts: {facts}[/dim]")
 
-            Instructions:
-            - Use this memory ONLY when directly relevant to the current message
-            - Prioritize recent conversation over old memory
-            - If user asks about something mentioned in memory, reference it naturally
-            - Do NOT force memory into every response
-            - Treat memory as Old Memories, not a script to follow
+        memory_prompt = f"""This Is History From Previous User Chats With You. Use This Info Only When Needed.
 
-            These Are User Facts 
-            {", ".join(facts)}
-            Only use them when you think its needed dont unnecessarily say you like this you had this appointment , Only Use It When Yu Feel Its Needed
-            """
+        Retrieved Memory:
+        {relevant_exchanges}
 
-            info += f"\n\n{memory_prompt}" if relevant_exchanges else ""
-        else:
-            relevant_info = compare_msg(user_input, loaded_docs, 10)
-            console.print(f"[dim]DEBUG {relevant_info}[/dim]")
+        Instructions:
+        - Use this memory ONLY when directly relevant to the current message
+        - Prioritize recent conversation over old memory
+        - If user asks about something mentioned in memory, reference it naturally
+        - Do NOT force memory into every response
+        - Treat memory as Old Memories, not a script to follow
 
-            info += f"\n\nThis Info Is Retrieved From Document Given By User Use Relevant Info From Doc As Needed {relevant_info}"
+        These Are User Facts 
+        {", ".join(facts)}
+        Only use them when you think its needed dont unnecessarily say you like this you had this appointment , Only Use It When Yu Feel Its Needed
+        """
+
+        info += f"\n\n{memory_prompt}" if relevant_exchanges else ""
 
         temp_hist.append(sys)
         now = datetime.now()

@@ -279,7 +279,7 @@ def compare_embed_group(group_name, u_e):
 
     return [summaries[i] for i in ids]
 
-def get_matches(user,k,topics):
+def get_matches_rag(user, k, topics):
     embedding = get_embedding(user + f"Topics {topics}")
     embedding = np.array(embedding,dtype=np.float32).flatten()
     matches = compare_embedding_master_table(embedding, k)
@@ -296,4 +296,4 @@ def get_matches(user,k,topics):
     return summary,load_facts()
 
 if __name__ == "__main__":
-    console.print(get_matches("Watched Thar Tensura ep", 10))
+    console.print(get_matches_rag("Watched Thar Tensura ep", 10))

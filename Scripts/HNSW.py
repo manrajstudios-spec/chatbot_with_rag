@@ -17,8 +17,6 @@ def save_data(data):
         pickle.dump(data, f)
 
 def make_graph(all_embeds, name, save):
-    all_embeds = np.array(all_embeds, dtype=np.float32)
-
     if all_embeds.ndim == 1:
         all_embeds = all_embeds[None, :]
 
@@ -100,7 +98,7 @@ def compare_embed(all_embeds, query_embed, name, threshold):
             graph = d["graph"]
             start = d["center_node"]
 
-    if graph is None:
+    if not graph:
         graph = make_graph(all_embeds, threshold, name, save=True)
 
     return check_graph(query_embed, all_embeds, graph, threshold,start)

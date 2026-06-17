@@ -204,11 +204,7 @@ Yuzu-Ai-Companion/
 **Requirements:** Python 3.10+, CUDA GPU (for Faster Whisper), LM Studio running locally on port 1234.
 
 ```bash
-pip install openai groq spacy keybert transformers pdfplumber \
-            trafilatura ddgs rapidfuzz faster-whisper openwakeword \
-            webrtcvad sounddevice pyaudio edge-tts rich numpy scipy
-
-python -m spacy download en_core_web_sm
+Requirements Are In requirements.txt file 
 ```
 
 Set your Groq API key in a `.env` file:

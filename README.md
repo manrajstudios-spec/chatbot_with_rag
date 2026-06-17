@@ -1,6 +1,6 @@
 # Multi Agent Chat Bot
 
-Yuzu is a personal AI companion built from scratch. She talks like a real friend, remembers things over time, can read documents, search the web, and respond using her own voice. Every core component — the retrieval system, the graph search, the chunker — is custom-built with no off-the-shelf RAG frameworks.
+It is a personal AI companion built from scratch. She talks like a real friend, remembers things over time, can read documents, search the web, and respond using her own voice. Every core component — the retrieval system, the graph search, the chunker — is custom-built with no off-the-shelf RAG frameworks.
 
 ---
 
@@ -11,11 +11,11 @@ Yuzu is a personal AI companion built from scratch. She talks like a real friend
 - **Web Search** — Automatically detects when a query needs live information, searches DuckDuckGo, scrapes and chunks the pages, then retrieves only the relevant parts using HNSW graph search.
 - **Document Reader** — Load PDFs or TXT files into the session. Documents are chunked, embedded, and stored in NPZ files for fast retrieval. Supports optional summarization.
 - **Voice Interface** — Wake word detection ("Alexa") using OpenWakeWord, silence-aware recording via WebRTC VAD, speech-to-text via Faster Whisper (GPU), and text-to-speech via Edge TTS (Japanese Nanami voice, played with ffplay).
-- **App Launcher** — Yuzu can open applications or websites from a user request. App names are fuzzy-matched against everything on your `$PATH`.
+- **App Launcher** — She can open applications or websites from a user request. App names are fuzzy-matched against everything on your `$PATH`.
 - **Query Router** — Every message is passed through an NLP routing layer that extracts topics, decides whether to search, and identifies apps to launch — all in a single structured JSON call.
 - **Local Embedding** — All embeddings use a local Gemma3 300M model running in LM Studio (`text-embedding-embeddinggemma-300m`). Nothing is sent to an external embedding API.
 - **Intent Classifier** — A locally fine-tuned transformer model classifies message intent before routing.
-- **Custom HNSW** — A from-scratch approximate nearest-neighbor graph (Hierarchical Navigable Small World) written in pure Python/NumPy. Used for doc retrieval, web chunk retrieval, and RAG group lookup.
+- **Custom Graph Search** — A from-scratch approximate nearest-neighbor graph (Hierarchical Navigable Small World) written in pure Python/NumPy. Used for doc retrieval, web chunk retrieval, and RAG group lookup.
 
 ---
 

@@ -1,6 +1,7 @@
 import heapq
 import pickle
 import numpy as np
+from loader import console
 
 path_graph = "../Data/Graph/hnsw_data.pickle"
 
@@ -32,6 +33,7 @@ def make_graph(all_embeds, name, save):
         sim[i] = -np.inf
 
         k = min(8, len(sim) - 1)
+
         neighbors = np.argpartition(sim, -k)[-k:]
         neighbors = neighbors[np.argsort(sim[neighbors])[::-1]]
         graph[i] = neighbors.tolist()
@@ -57,7 +59,6 @@ def make_graph(all_embeds, name, save):
         save_data(data)
 
     return graph, center_node
-
 def check_graph(query_embed, all_embeds, graph, threshold, start):
     similar = []
     visited = set()
@@ -71,12 +72,12 @@ def check_graph(query_embed, all_embeds, graph, threshold, start):
 
     while heap:
         n_similarity, cur_id = heapq.heappop(heap)
-
         if cur_id in visited:
             continue
-
         visited.add(cur_id)
-        print(f"sim centre: {n_similarity}")
+
+        console.print(f"[dim]sim centre: {n_similarity}[/dim]")
+
         sim = -n_similarity
 
         if sim > threshold:
@@ -85,11 +86,10 @@ def check_graph(query_embed, all_embeds, graph, threshold, start):
         for neighbor in graph[cur_id]:
             if neighbor not in visited:
                 neighbor_sim = float(norm_query @ norm_all[neighbor])
-                print(f"neighbour: {neighbor_sim}")
+                console.print(f"[dim]neighbour: {neighbor_sim}[/dim]")
                 heapq.heappush(heap,(-neighbor_sim, neighbor))
 
     return similar
-
 def compare_embed(all_embeds, query_embed, name, threshold):
     data = load_data()
     start = 0
@@ -102,4 +102,5 @@ def compare_embed(all_embeds, query_embed, name, threshold):
 
     if graph is None:
         graph = make_graph(all_embeds, threshold, name, save=True)
+
     return check_graph(query_embed, all_embeds, graph, threshold,start)

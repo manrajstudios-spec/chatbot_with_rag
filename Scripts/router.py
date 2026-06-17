@@ -6,11 +6,11 @@ import subprocess
 import trafilatura
 import numpy as np
 from ddgs import DDGS
+from loader import console
 from urllib.parse import quote
 from doc_reader import make_chunks
 from rapidfuzz import process, fuzz
 from HNSW import make_graph,check_graph
-
 all_apps = set()
 
 for directory in os.environ["PATH"].split(":"):
@@ -176,8 +176,6 @@ def route_msg(query):
 
     raw = json.loads(response.choices[0].message.content)
 
-    print(raw)
-
     search_queries = raw["search_queries"]
     open_items = raw["open_items"]
     topics = raw["topics"]
@@ -239,7 +237,7 @@ def web_search(queries,to_ask):
                     threshold = json.load(f)["web_search"]
 
                 ids = check_graph(query_embed,embeddings,graph,threshold,start)
-                print(f"web ids: {ids}")
+                console.print(f"[dim]web ids: {ids}[/dim]")
 
                 for i in ids:
                     cur_query.append(chunks[i].strip())

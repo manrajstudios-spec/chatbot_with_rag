@@ -3,6 +3,7 @@ import json
 import loader
 import pdfplumber
 import numpy as np
+from loader import console
 from tkinter import Tk,filedialog
 from HNSW import compare_embed,make_graph
 
@@ -98,7 +99,7 @@ EXAMPLE OUTPUT:
         try:
             return json.loads(raw)
         except json.JSONDecodeError as e:
-            print(f"Parsing Error: {e}")
+            console.print(f"[dim]Parsing Error: {e}[/dim]")
 
 def get_embedding(query):
     response = loader.lm_client.embeddings.create(model=embeddings_model, input=query)
@@ -154,7 +155,7 @@ def insert_doc():
     filepath = filedialog.askopenfilename()
 
     if not filepath:
-        print("No file selected")
+        console.print("[dim]No file selected[/dim]")
     else:
         ask_with_summary = ask_user("Do You Want To Save Summary of doc OR actual doc (Press 0 for Actual 1 For Summary) (Note Summaries can be Wrong Or might not cover details): ")
 
@@ -284,19 +285,19 @@ def select_docs():
 
         if docs:
             if len(selected_docs) > max_attachments:
-                print("Max Attachments Reached :(")
+                console.print("[dim]Max Attachments Reached :([/dim]")
                 break
 
             for i,doc in enumerate(docs):
                 if doc in selected_docs: continue
                 showed = True
                 options.append(i+1)
-                print(f"{i+1}: {doc["file_name"]} \n")
+                console.print(f"[dim]{i + 1}: {doc['file_name']}[/dim]")
         else:
-            print("No documents found")
+            console.print("[dim]No documents found[/dim]")
 
         if not showed:
-            print("No documents found")
+            console.print("[dim]No documents found[/dim]")
             to_ask = "Press n to add new doc: Press q to quit: "
 
         # ask user
@@ -313,12 +314,12 @@ def select_docs():
             user_choice = int(user_choice)
 
             if user_choice > len(docs) :
-                print("Invalid Input: ")
+                console.print("[dim]Invalid Input[/dim]")
                 continue
 
             selected_docs.append(docs[user_choice-1])
 
-            print("Doc Added")
+            console.print("[dim]Doc Added[/dim]")
 
             if len(selected_docs) < max_attachments:
                 want_another_doc = ask_user("Want To Add another document? (0 for NO or 1 for YES) ")
@@ -327,10 +328,10 @@ def select_docs():
                 elif want_another_doc == "1":
                     continue
                 else:
-                    print("Invalid Input: ")
+                    console.print("[dim]Invalid Input[/dim]")
                     continue
         else:
-            print("Invalid Input: ")
+            console.print("[dim]Invalid Input[/dim]")
             continue
 
     return selected_docs
@@ -355,7 +356,7 @@ def unload_docs(loaded_docs):
             return []
 
         for i,doc in enumerate(loaded_docs):
-            print(f"{i+1}: {doc['file_name']} \n")
+            console.print(f"[dim]{i + 1}: {doc['file_name']}[/dim]")
 
         u_i = ask_user("Enter The Number of file You wanna remove or press q to quit: ")
 
@@ -364,7 +365,7 @@ def unload_docs(loaded_docs):
 
         if u_i and u_i.isdigit():
             if int(u_i) > len(loaded_docs) or int(u_i) <= 0:
-                print("Invalid Input: ")
+                console.print("[dim]Invalid Input[/dim]")
                 continue
 
             loaded_docs.pop(int(u_i) - 1)

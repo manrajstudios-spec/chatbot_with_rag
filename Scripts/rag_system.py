@@ -3,8 +3,9 @@ import json
 import loader
 import sqlite3
 import numpy as np
-from HNSW import compare_embed,make_graph
 from datetime import datetime
+from loader import console
+from HNSW import compare_embed,make_graph
 
 summary_model = "openai/gpt-oss-120b"
 embeddings_model = "text-embedding-embeddinggemma-300m"
@@ -181,7 +182,7 @@ def add_turn(hist):
     results,exchanges = rag_query(hist)
     f = []
     for i, (result, exchange) in enumerate(zip(results, exchanges)):
-        print("Initiated Save")
+        console.print("[dim]Initiated Save[/dim]")
         cur_exchange = exchange
         f = result["facts"]
         cur_topics = result["topics"]
@@ -218,16 +219,17 @@ def add_turn(hist):
 
                 embeddings_all = [np.frombuffer(r[0],dtype=np.float32) for r in row]
                 make_graph(np.array(embeddings_all,dtype=np.float32),name,True)
-                print(f"Old Group ")
+                console.print("[dim]Old Group[/dim]")
 
         else:
             add_new_group(cur_exchange,embedding,cur_topics,date)
-            print(f"New Group")
+            console.print("[dim]New Group[/dim]")
 
     write_facts(f)
 
 def compare_embedding_master_table(embedding, k):
-    print("Getting matched Groups")
+    console.print("[dim]Getting matched Groups[/dim]")
+
     cursor_complex_rag.execute("SELECT tables_name,group_embeddings FROM master_table")
     rows = cursor_complex_rag.fetchall()
 
@@ -243,18 +245,19 @@ def compare_embedding_master_table(embedding, k):
 
     similarity = (embeddings @ embedding) / norms
     threshold = 0
+    console.print(f"[dim]sims_master: {similarity}[/dim]")
 
     with open("../Data/Config/config_json.json", "r") as f:
         threshold = json.load(f)["master_tabel_threshold"]
 
-    print(f"sims_master: {similarity}")
     similarity_ids = similarity.argsort()[::-1]
     selected = [i for i in similarity_ids[:min(k, len(similarity_ids))] if similarity[i] > threshold]
 
     return [names[i] for i in selected]
 
 def compare_embed_group(group_name, u_e):
-    print("Re ranking in groups")
+    console.print("[dim]Re ranking in groups[/dim]")
+
     cursor_complex_rag.execute(f'SELECT exchange,embedding,topics FROM "{group_name}"')
     rows = cursor_complex_rag.fetchall()
 
@@ -272,7 +275,7 @@ def compare_embed_group(group_name, u_e):
         threshold = json.load(f)["within_tabel"]
 
     ids = compare_embed(embeddings,u_e,group_name,threshold)
-    print(f"ids: {ids}")
+    console.print(f"[dim]ids: {ids}[/dim]")
 
     return [summaries[i] for i in ids]
 
@@ -293,4 +296,4 @@ def get_matches(user,k,topics):
     return summary,load_facts()
 
 if __name__ == "__main__":
-    print(get_matches("Watched Thar Tensura ep",10))
+    console.print(get_matches("Watched Thar Tensura ep", 10))

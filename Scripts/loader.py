@@ -1,9 +1,15 @@
 import os
-import  spacy
+import spacy
 from openai import OpenAI
-from dotenv import load_dotenv
-from transformers import AutoTokenizer,AutoModelForSequenceClassification
+from rich.live import Live
+from rich.panel import Panel
 from keybert import KeyBERT
+from dotenv import load_dotenv
+from rich.console import Console
+from rich.spinner import Spinner
+from transformers import AutoTokenizer,AutoModelForSequenceClassification
+
+console = Console()
 
 load_dotenv()
 

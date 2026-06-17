@@ -5,7 +5,7 @@ import sqlite3
 import numpy as np
 from datetime import datetime
 from loader import console
-from HNSW import compare_embed,make_graph
+from graph_search import compare_embed,make_graph
 
 summary_model = "openai/gpt-oss-120b"
 embeddings_model = "text-embedding-embeddinggemma-300m"

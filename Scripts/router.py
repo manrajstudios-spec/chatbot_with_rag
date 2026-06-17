@@ -10,7 +10,7 @@ from loader import console
 from urllib.parse import quote
 from doc_reader import make_chunks
 from rapidfuzz import process, fuzz
-from HNSW import make_graph,check_graph
+from graph_search import make_graph,check_graph
 all_apps = set()
 
 for directory in os.environ["PATH"].split(":"):

@@ -5,7 +5,7 @@ import pdfplumber
 import numpy as np
 from loader import console
 from tkinter import Tk,filedialog
-from HNSW import compare_embed,make_graph
+from graph_search import compare_embed,make_graph
 
 root = Tk()
 root.withdraw()

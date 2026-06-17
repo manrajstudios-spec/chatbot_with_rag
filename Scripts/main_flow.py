@@ -127,7 +127,7 @@ while True:
             continue
 
         exchanges.append({"role": "user", "content": user_input})
-        to_give = exchanges[0:max(last_msgs,len(exchanges))]
+        to_give = exchanges[0:mix(last_msgs,len(exchanges))]
 
         to_give_text = ""
 

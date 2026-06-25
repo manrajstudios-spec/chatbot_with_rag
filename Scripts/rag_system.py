@@ -5,126 +5,123 @@ import sqlite3
 import numpy as np
 from datetime import datetime
 from loader import console
-from graph_search import compare_embed,make_graph
+from graph_search import compare_embed,make_graph,add_to_graph
+
+
+
+# Fixes Left
+
+# Handle input for rag and keeping good exchnages only
 
 summary_model = "openai/gpt-oss-120b"
 embeddings_model = "text-embedding-embeddinggemma-300m"
 
-sys_prompt = '''
-You are a conversation memory summarizer.
+sys_prompt = '''You are a conversation memory fact and topic extractor.
 
 IMPORTANT OUTPUT RULES
-- Output ONLY valid JSON
-- No explanations, no markdown, no extra text
-- Output must be a JSON array
-- Each item corresponds to ONE exchange only
-- Never merge multiple exchanges into one object
 
-OUTPUT FORMAT (STRICT)
-Each item must follow exactly:
-{
-  "facts": ["clean atomic facts", "..."],
-  "topics": ["high-level topics"]
+*   Output ONLY valid JSON
+*   No explanations, no markdown, no extra text
+*   Output must be a JSON array
+*   Each item in the output array corresponds to ONE useful exchange from the input list.
+*   STRICT RULE: If an input exchange contains no meaningful information (e.g., just greetings, small talk, or filler), completely drop it. Do not include it in the final array.
+*   STRICT RULE: Do not summarize the conversation or write descriptive summaries. Only extract discrete atomic facts and high-level topics.
+
+INPUT FORMAT EXPECTED  
+The system will receive data in the following structure:  
+{  
+"old_facts": ["previously extracted user facts", "..."],  
+"exchanges": [  
+{  
+"user": "User message text",  
+"assistant": "Assistant response text"  
+}  
+]  
 }
 
-FIELD RULES
-1. facts
-- Extract ONLY explicit, meaningful information
-- Must be short (no paragraphs)
-- Normalize and fix typos (e.g. "pythn lerning" → "learning Python")
-- Include:
-  - preferences
-  - goals
-  - tools/models mentioned
-  - numbers, constraints, or claims
-- Exclude:
-  - vague statements
-  - conversational filler
-  - redundant information
+OUTPUT FORMAT (STRICT)  
+The final output must be a clean JSON array containing elements only for the useful, kept exchanges:  
+[  
+{  
+"facts": ["clean atomic facts extracted from this exchange", "..."],  
+"topics": ["high-level topics for this exchange"]  
+}  
+]
 
-############################################
-topics
-############################################
+FIELD RULES: USER FACTS & STATE MANAGEMENT
 
-Purpose:
+1.  EXTRACT NEW FACTS:
+    *   Extract ONLY explicit, meaningful information about the user.
+    *   Must be short, punchy fragments (no paragraphs).
+    *   Normalize terms and fix typos (e.g., pythn lerning -> learning Python).
+2.  MERGE & UPDATE STATE (INTEGRATE WITH OLD FACTS):
+    *   Compare new extractions against the provided list of old facts.
+    *   If user preferences or situations have changed, OVERWRITE the old fact with the new tracking data.
+    *   If a new fact provides more detail to an old fact, MERGE them into a single precise point.
+    *   If a new fact is entirely new, APPEND it to the list.
+3.  STRICTLY INCLUDE user-related details only:
+    *   User current preferences, dislikes, and interests.
+    *   User goals, deadlines, and timelines.
+    *   Tools, models, or technologies the user actively uses or wants to learn.
+    *   Numbers, constraints, or claims specific to the user's current situation.
+
+FIELD RULES: EXCLUSIONS & FILTERING (CRITICAL)  
+4. STRICTLY EXCLUDE UNWANTED EXCHANGES:
+
+*   Do not process, evaluate, or output any item for input exchanges that are just greetings, small talk, or conversational filler (e.g., "hi", "hello", "how are you", "thanks", "ok", "you're welcome").
+*   Omit any exchange that does not contain worth-storing facts or major topic shifts.
+
+5.  STRICTLY EXCLUDE CONTENT-WISE:
+    *   General knowledge, tech concepts, or industry debates (e.g., "Attention is better than LSTM").
+    *   Redundant or conflicting outdated information.
+
+############################################  
+topics  
+############################################  
+Purpose:  
 Generate BROAD semantic categories for retrieval, memory lookup, semantic search, clustering, and routing.
 
 Rules:
-- Topics are NOT keywords. They represent the general subject area/domain of the request.
-- Prefer broad domains over specific terms (e.g., "networking" not "tcp packets").
-- Prefer categories over keywords (e.g., "machine learning" not "transformer layers").
-- Use 1-5 topics when possible. Maximum 8.
-- Remove duplicates. Order by importance.
-- Use lowercase unless proper noun.
-- If the message contains ONLY a greeting with no question/task, use ["greeting"].
-- If greeting is mixed with a topic, ignore the greeting and extract only real topic(s).
+
+*   Topics are NOT keywords. They represent the general subject area/domain of the request.
+*   Prefer broad domains over specific terms (e.g., "networking" not "tcp packets").
+*   Prefer categories over keywords (e.g., "machine learning" not "transformer layers").
+*   Use 1-5 topics when possible. Maximum 8.
+*   Remove duplicates. Order by importance.
+*   Use lowercase unless proper noun.
 
 Topic selection guidance:
-- For technology: networking, operating systems, programming, web development, databases, devops, cybersecurity, mobile development, version control, artificial intelligence, machine learning, deep learning, computer vision, natural language processing, reinforcement learning, data science
-- For finance: finance, stock market, cryptocurrency, personal finance, economics
-- For science: mathematics, physics, chemistry, biology
-- For creative: design, graphic design, video & animation, music
-- For entertainment: anime, gaming, movies & tv, sports
-- For career: career, education, productivity
-- For lifestyle: health, travel, food
-- For general: general knowledge, current events, social, greeting
-- When uncertain between a keyword and a category, choose the broader category.
-- If no clear domain fits, use "general knowledge" or infer t
 
-############################################
-TOPIC SELECTION EXAMPLES
-############################################
+*   For technology: networking, operating systems, programming, web development, databases, devops, cybersecurity, mobile development, version control, artificial intelligence, machine learning, deep learning, computer vision, natural language processing, reinforcement learning, data science
+*   For finance: finance, stock market, cryptocurrency, personal finance, economics
+*   For science: mathematics, physics, chemistry, biology
+*   For creative: design, graphic design, video & animation, music
+*   For entertainment: anime, gaming, movies & tv, sports
+*   For career: career, education, productivity
+*   For lifestyle: health, travel, food
+*   For general: general knowledge, current events, social
 
-"explain tcp"
-→ ["networking"]
+############################################  
+TOPIC SELECTION EXAMPLES  
+############################################  
+"explain tcp" → ["networking"]  
+"how do transformers work in ml" → ["machine learning", "deep learning"]  
+"best isekai anime" → ["anime"]  
+"train a cnn on images" → ["deep learning", "computer vision"]  
+"docker compose tutorial" → ["devops"] 
+"bitcoin price today" → ["cryptocurrency"]  
+"how to crack a faang interview" → ["career", "programming"]  
+"explain backpropagation" → ["deep learning"]  
+"what is inflation" → ["economics"]
 
-"how do transformers work in ml"
-→ ["machine learning", "deep learning"]
+Bad: ["tcp", "packets", "three-way handshake"]  
+Good: ["networking"]
 
-"best isekai anime"
-→ ["anime"]
+Bad: ["transformers", "attention", "layers"]  
+Good: ["machine learning", "deep learning"]
 
-"train a cnn on images"
-→ ["deep learning", "computer vision"]
-
-"docker compose tutorial"
-→ ["devops"]
-
-"bitcoin price today"
-→ ["cryptocurrency"]
-
-"how to crack a faang interview"
-→ ["career", "programming"]
-
-"explain backpropagation"
-→ ["deep learning"]
-
-"what is inflation"
-→ ["economics"]
-
-"hi"
-→ ["greeting"]
-
-"hey bro"
-→ ["greeting"]
-
-Bad:
-["tcp", "packets", "three-way handshake"]
-
-Good:
-["networking"]
-
-Bad:
-["transformers", "attention", "layers"]
-
-Good:
-["machine learning", "deep learning"]
-
-Bad:
-["naruto", "anime fights", "jutsu"]
-
-Good:
-["anime"]
+Bad: ["naruto", "anime fights", "jutsu"]  
+Good: ["anime"]
 '''
 complex_rag = sqlite3.connect("../Data/chat_data/complex_rag.db")
 cursor_complex_rag = complex_rag.cursor()
@@ -137,7 +134,7 @@ def load_facts():
     try:
         with open("../Data/docs/facts.json", "r") as f:
             return json.load(f)
-    except:
+    except (FileNotFoundError, json.JSONDecodeError):
         return []
 
 def write_facts(facts):
@@ -145,21 +142,22 @@ def write_facts(facts):
         json.dump(facts, f,indent=4)
 
 def rag_query(hist):
-    all = []
     msg = ""
+
     for i,m in enumerate(hist):
         if i % 2 == 0:
-            msg += f"{i+1}: User: {m} \nASSISTANT: {hist[i+1]}"
-            summ = f"{i+1}: User: {m} \nASSISTANT: {hist[i+1]}"
-            all.append(summ)
+            msg += f"{i}: User: {m} \nASSISTANT: {hist[i+1]}\n"
 
-    facts_msg = f"""\nOld Facts = {", ".join(load_facts())}
-These are Old Facts Modify Them Or Delete Unusable Facts and give new facts containing older facts 
-If none exist, use []"""
+    facts_msg = ", ".join(load_facts())
 
-    response = loader.groq_client.chat.completions.create(model=summary_model, messages=[{"role": "system", "content":sys_prompt + " " + facts_msg}, {"role": "user", "content":msg}])
+    response = loader.groq_client.chat.completions.create(model=summary_model, messages=[{"role": "system", "content":sys_prompt + "\nFacts -> " + facts_msg}, {"role": "user", "content":msg}])
     raw = response.choices[0].message.content.strip()
-    return json.loads(raw),all
+
+    try:
+        return json.loads(raw)
+    except json.JSONDecodeError:
+        print(f"Failed to parse raw output: {raw}")
+        return []
 
 def get_embedding(exchange):
     response = loader.lm_client.embeddings.create(model=embeddings_model, input=exchange)
@@ -170,7 +168,7 @@ def add_new_group(exchange, embedding, topics,date):
 
     cursor_complex_rag.execute(f'CREATE TABLE "{group_name}"(id INTEGER PRIMARY KEY AUTOINCREMENT,exchange TEXT,embedding BLOB,topics TEXT,date TEXT); ')
     cursor_complex_rag.execute(
-        f'INSERT INTO "{group_name}" (exchange, embedding,topics,date) VALUES (?, ?,?,?)',(exchange, np.array(embedding, dtype=np.float32).tobytes(), "' ".join(topics),date))
+        f'INSERT INTO "{group_name}" (exchange, embedding,topics,date) VALUES (?, ?,?,?)',(exchange, np.array(embedding, dtype=np.float32).tobytes(), ", ".join(topics),date))
     complex_rag.commit()
 
     cursor_complex_rag.execute("INSERT INTO master_table (tables_name, group_embeddings, count, topics) VALUES (?, ?, ?, ?)",(group_name, np.array(embedding, dtype=np.float32).tobytes(), 1, ", ".join(topics)))
@@ -179,9 +177,10 @@ def add_new_group(exchange, embedding, topics,date):
     complex_rag.commit()
 
 def add_turn(hist):
-    results,exchanges = rag_query(hist)
+    results = rag_query(hist)
     f = []
-    for i, (result, exchange) in enumerate(zip(results, exchanges)):
+
+    for i, result in enumerate(results):
         console.print("[dim]Initiated Save[/dim]")
         cur_exchange = exchange
         f = result["facts"]
@@ -196,6 +195,13 @@ def add_turn(hist):
 
         if group_names:
             for name in group_names:
+                cursor_complex_rag.execute(f'SELECT embedding FROM "{name}"')
+                row = cursor_complex_rag.fetchall()
+
+                embeddings_all = [np.frombuffer(r[0],dtype=np.float32) for r in row]
+
+                add_to_graph(name,np.array(embeddings_all,dtype=np.float32),embedding)
+
                 cursor_complex_rag.execute(f'INSERT INTO "{name}" (exchange, embedding,topics,date) VALUES (?, ?,?,?)',(cur_exchange, np.array(embedding, dtype=np.float32).tobytes(),", ".join(cur_topics),date))
                 complex_rag.commit()
 
@@ -214,11 +220,6 @@ def add_turn(hist):
                     'UPDATE master_table SET count=?, topics=?, group_embeddings=? WHERE tables_name=?',
                     (count+1, ", ".join(all_topics),new_mean.tobytes(), name))
 
-                cursor_complex_rag.execute(f'SELECT embedding FROM "{name}"')
-                row = cursor_complex_rag.fetchall()
-
-                embeddings_all = [np.frombuffer(r[0],dtype=np.float32) for r in row]
-                make_graph(np.array(embeddings_all,dtype=np.float32),name,True)
                 console.print("[dim]Old Group[/dim]")
 
         else:
@@ -264,7 +265,7 @@ def compare_embed_group(group_name, u_e):
     if not rows:
         return []
 
-    summaries = [row[0] for row in rows]
+    summaries:list[str] = [row[0] for row in rows]
 
     embeddings = [np.frombuffer(row[1], dtype=np.float32)for row in rows]
     embeddings = np.array(embeddings,dtype=np.float32)
@@ -274,7 +275,7 @@ def compare_embed_group(group_name, u_e):
     with open("../Data/Config/config_json.json", "r") as f:
         threshold = json.load(f)["within_tabel"]
 
-    ids = compare_embed(embeddings,u_e,group_name,threshold)
+    ids = compare_embed(embeddings,u_e,group_name,threshold,5)
     console.print(f"[dim]ids: {ids}[/dim]")
 
     return [summaries[i] for i in ids]
@@ -296,4 +297,4 @@ def get_matches_rag(user, k, topics):
     return summary,load_facts()
 
 if __name__ == "__main__":
-    console.print(get_matches_rag("Watched Thar Tensura ep", 10))
+    console.print(get_matches_rag("Watched Thar Tensura ep", 10,[""]))

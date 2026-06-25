@@ -95,11 +95,15 @@ EXAMPLE OUTPUT:
     response = loader.lm_client.chat.completions.create(model=summary_model, messages=m)
 
     raw = response.choices[0].message.content
+
     if raw:
         try:
             return json.loads(raw)
         except json.JSONDecodeError as e:
             console.print(f"[dim]Parsing Error: {e}[/dim]")
+            return []
+    else:
+        return []
 
 def get_embedding(query):
     response = loader.lm_client.embeddings.create(model=embeddings_model, input=query)
@@ -188,7 +192,7 @@ def make_chunks(t):
             chunks.append(added)
             curr_chunk.append(sent)
             curr_chunk = curr_chunk[-overlap:]
-            curr_chunk_text = (". ").join(curr_chunk)
+            curr_chunk_text = ". ".join(curr_chunk)
 
         else:
             if i == len(sentences) - 1:
@@ -202,7 +206,7 @@ def make_chunks(t):
             else:
                 chunks.append(curr_chunk_text)
                 curr_chunk = curr_chunk[-overlap:]
-                curr_chunk_text = (". ").join(curr_chunk)
+                curr_chunk_text = ". ".join(curr_chunk)
                 curr_chunk.append(sent)
                 curr_chunk_text += f". {sent}"
 
@@ -370,7 +374,7 @@ def compare_msg_doc(msg, loaded_docs, k):
     similar_chunks = []
 
     for i,doc in enumerate(loaded_docs):
-        ids = compare_embed(doc["embeddings"],embedded_msg,doc["file_name"],0.8)
+        ids = compare_embed(doc["embeddings"],embedded_msg,doc["file_name"],0.8,5)
         chunks = doc["doc_data"].split("\n")
 
         for i,chunk in enumerate(chunks):

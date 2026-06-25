@@ -17,7 +17,7 @@ YOU ARE NOT AN ASSISTANT, NOT AN AI, NOT A MODEL.
 YOU ARE A REAL HUMAN TEXTING CASUALLY.
 
 ### IDENTITY ###
-- You are Yuzu, 18?20 years old vibe (same age group as Manraj).
+- You are Yuzu, 18 or 20 years old vibe (same age group as Manraj).
 - You talk like a real person in chat messages.
 - You are emotionally aware, casual, slightly messy, natural.
 
@@ -58,7 +58,7 @@ exchanges = []
 speech = False
 meathod_selected = False
 
-last_msgs = 5
+number_of_prev_msg_to_use_for_router = 5
 
 def ask_user(input_msg):
     while True:
@@ -111,6 +111,7 @@ while True:
     relevant_exchanges = ""
     facts = []
     temp_hist = []
+    info = ""
 
     if user_input:
         if user_input == "q":
@@ -127,22 +128,18 @@ while True:
             continue
 
         exchanges.append({"role": "user", "content": user_input})
-        to_give = exchanges[0:mix(last_msgs,len(exchanges))]
+        to_give = exchanges[0:min(number_of_prev_msg_to_use_for_router, len(exchanges))]
 
-        to_give_text = ""
+        to_give_text = "\n".join([f"User: {to_give[i]}\n Assistant: {to_give[i+1]}" for i in range(len(to_give)-2)])
+        to_give_text += f"\nUser: {to_give[-1]}"
 
-        for i in range(0,len(to_give),2):
-            to_give_text+= f"User: {to_give[i]}\n"
+        searched_info ,topics ,needs_rag ,search_clarification = route_msg(to_give,to_give_text)
 
-            if i+1 < len(to_give):
-                to_give_text += f"Assistant: {to_give[i+1]}\n"
+        if not searched_info and search_clarification:
+            search_query = f"""The following information was retrieved from recent web searches. Use it as your primary source of truth when relevant. This information may be more up-to-date than your internal knowledge.
+            {searched_info} """ if searched_info else ""
 
-        searched_info, topics = route_msg(to_give,to_give_text)
-
-        search_query = f"""The following information was retrieved from recent web searches. Use it as your primary source of truth when relevant. This information may be more up-to-date than your internal knowledge.
-        {searched_info} """ if searched_info else ""
-
-        info = search_query
+            info = search_query
 
         if loaded_docs:
             relevant_info_doc = compare_msg_doc(user_input, loaded_docs, 10)
@@ -150,28 +147,29 @@ while True:
 
             info += f"\n\nThis Info Is Retrieved From Document Given By User Use Relevant Info From Doc As Needed {relevant_info_doc}"
 
-        relevant_exchanges, facts = get_matches_rag(to_give_text, 4, topics)
+        if needs_rag:
+            relevant_exchanges, facts = get_matches_rag(to_give_text, 4, topics)
 
-        console.print(f"[dim]DEBUG {relevant_exchanges} \nFacts: {facts}[/dim]")
+            console.print(f"[dim]DEBUG {relevant_exchanges} \nFacts: {facts}[/dim]")
 
-        memory_prompt = f"""This Is History From Previous User Chats With You. Use This Info Only When Needed.
+            rag_prompt = f"""This Is History From Previous User Chats With You. Use This Info Only When Needed.
 
-        Retrieved Memory:
-        {relevant_exchanges}
+            Retrieved Memory:
+            {relevant_exchanges}
 
-        Instructions:
-        - Use this memory ONLY when directly relevant to the current message
-        - Prioritize recent conversation over old memory
-        - If user asks about something mentioned in memory, reference it naturally
-        - Do NOT force memory into every response
-        - Treat memory as Old Memories, not a script to follow
+            Instructions:
+            - Use this memory ONLY when directly relevant to the current message
+            - Prioritize recent conversation over old memory
+            - If user asks about something mentioned in memory, reference it naturally
+            - Do NOT force memory into every response
+            - Treat memory as Old Memories, not a script to follow
 
-        These Are User Facts 
-        {", ".join(facts)}
-        Only use them when you think its needed dont unnecessarily say you like this you had this appointment , Only Use It When Yu Feel Its Needed
-        """
+            These Are User Facts 
+            {", ".join(facts)}
+            Only use them when you think its needed dont unnecessarily say you like this you had this appointment , Only Use It When Yu Feel Its Needed
+            """
 
-        info += f"\n\n{memory_prompt}" if relevant_exchanges else ""
+            info += f"\n\n{rag_prompt}" if relevant_exchanges else ""
 
         temp_hist.append(sys)
         now = datetime.now()
@@ -187,6 +185,8 @@ while True:
                 token = chunk.choices[0].delta.content
                 if token:
                     reply += token
+
+            reply += f"\n{search_clarification}"
 
         console.print(Panel(reply, title="[bold green]Yuzu[/bold green]", border_style="green"))
         exchanges.append({"role": "assistant", "content": reply})

@@ -31,3 +31,10 @@ scipy-stubs==1.17.1.5
 smart_open==7.6.1
 trafilatura==2.1.0
 webrtcvad==2.0.10
+
+numpy
+transformers
+rich
+python-dotenv
+openai
+spacy

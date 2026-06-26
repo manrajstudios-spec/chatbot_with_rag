@@ -11,7 +11,7 @@ from graph_search import compare_embed,make_graph,add_to_graph
 
 # Fixes Left
 
-# Handle input for rag and keeping good exchnages only
+# Finsih Add To Rag
 
 enc = tiktoken.get_encoding("cl100k_base")
 summary_model = "openai/gpt-oss-120b"

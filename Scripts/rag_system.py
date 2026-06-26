@@ -2,133 +2,111 @@ import uuid
 import json
 import loader
 import sqlite3
+import tiktoken
 import numpy as np
 from datetime import datetime
-from loader import console
+from sentence_transformers import util
+from loader import console,get_response,get_embedding
 from graph_search import compare_embed,make_graph,add_to_graph
-
-
 
 # Fixes Left
 
 # Handle input for rag and keeping good exchnages only
 
+enc = tiktoken.get_encoding("cl100k_base")
 summary_model = "openai/gpt-oss-120b"
 embeddings_model = "text-embedding-embeddinggemma-300m"
 
-sys_prompt = '''You are a conversation memory fact and topic extractor.
+sys_prompt = """You are a conversation memory extractor.
 
 IMPORTANT OUTPUT RULES
 
-*   Output ONLY valid JSON
-*   No explanations, no markdown, no extra text
-*   Output must be a JSON array
-*   Each item in the output array corresponds to ONE useful exchange from the input list.
-*   STRICT RULE: If an input exchange contains no meaningful information (e.g., just greetings, small talk, or filler), completely drop it. Do not include it in the final array.
-*   STRICT RULE: Do not summarize the conversation or write descriptive summaries. Only extract discrete atomic facts and high-level topics.
+- Output ONLY valid JSON. No explanations, no markdown, no extra text.
+- Output must be a JSON object with three keys: useful_exchanges, topics, facts.
 
-INPUT FORMAT EXPECTED  
-The system will receive data in the following structure:  
-{  
-"old_facts": ["previously extracted user facts", "..."],  
-"exchanges": [  
-{  
-"user": "User message text",  
-"assistant": "Assistant response text"  
-}  
-]  
+INPUT FORMAT
+
+You will receive data in the following structure:
+
+{
+  "old_facts": ["previously extracted user facts", "..."],
+  "exchanges": [
+    {
+      "index": 0,
+      "user": "User message text",
+      "assistant": "Assistant response text"
+    }
+  ]
 }
 
-OUTPUT FORMAT (STRICT)  
-The final output must be a clean JSON array containing elements only for the useful, kept exchanges:  
-[  
-{  
-"facts": ["clean atomic facts extracted from this exchange", "..."],  
-"topics": ["high-level topics for this exchange"]  
-}  
-]
+Each exchange is tagged with an index number (0, 1, 2, ...).
 
-FIELD RULES: USER FACTS & STATE MANAGEMENT
+OUTPUT FORMAT (STRICT)
 
-1.  EXTRACT NEW FACTS:
-    *   Extract ONLY explicit, meaningful information about the user.
-    *   Must be short, punchy fragments (no paragraphs).
-    *   Normalize terms and fix typos (e.g., pythn lerning -> learning Python).
-2.  MERGE & UPDATE STATE (INTEGRATE WITH OLD FACTS):
-    *   Compare new extractions against the provided list of old facts.
-    *   If user preferences or situations have changed, OVERWRITE the old fact with the new tracking data.
-    *   If a new fact provides more detail to an old fact, MERGE them into a single precise point.
-    *   If a new fact is entirely new, APPEND it to the list.
-3.  STRICTLY INCLUDE user-related details only:
-    *   User current preferences, dislikes, and interests.
-    *   User goals, deadlines, and timelines.
-    *   Tools, models, or technologies the user actively uses or wants to learn.
-    *   Numbers, constraints, or claims specific to the user's current situation.
+{
+  "useful_exchanges": [0, 2, 4],
+  "topics": [["topic1", "topic2"], ["topic1"], ["topic1", "topic3"]],
+  "facts": ["flat list of all facts: old untouched + modified + new"]
+}
 
-FIELD RULES: EXCLUSIONS & FILTERING (CRITICAL)  
-4. STRICTLY EXCLUDE UNWANTED EXCHANGES:
+FIELD RULES
 
-*   Do not process, evaluate, or output any item for input exchanges that are just greetings, small talk, or conversational filler (e.g., "hi", "hello", "how are you", "thanks", "ok", "you're welcome").
-*   Omit any exchange that does not contain worth-storing facts or major topic shifts.
+useful_exchanges:
+- Include the index of an exchange ONLY if it contains meaningful information worth storing.
+- DROP exchanges that are just greetings, small talk, filler, or simple one-off queries with no preference, goal, or user-specific information (e.g. "hi", "thanks", "how are you", "what is X" with no personal context).
+- KEEP exchanges that reveal user preferences, goals, dislikes, tools, deadlines, constraints, or anything personal and reusable.
 
-5.  STRICTLY EXCLUDE CONTENT-WISE:
-    *   General knowledge, tech concepts, or industry debates (e.g., "Attention is better than LSTM").
-    *   Redundant or conflicting outdated information.
+topics:
+- STRICT: len(topics) MUST always equal len(useful_exchanges).
+- Each entry in topics corresponds to the exchange at the same position in useful_exchanges.
+- Each entry is a list of 1-5 broad semantic topic categories for that exchange.
+- Topics are broad domains, not keywords. Use lowercase unless proper noun.
+- Examples: ["machine learning"], ["programming", "python"], ["career", "education"]
 
-############################################  
-topics  
-############################################  
-Purpose:  
-Generate BROAD semantic categories for retrieval, memory lookup, semantic search, clustering, and routing.
-
-Rules:
-
-*   Topics are NOT keywords. They represent the general subject area/domain of the request.
-*   Prefer broad domains over specific terms (e.g., "networking" not "tcp packets").
-*   Prefer categories over keywords (e.g., "machine learning" not "transformer layers").
-*   Use 1-5 topics when possible. Maximum 8.
-*   Remove duplicates. Order by importance.
-*   Use lowercase unless proper noun.
+*   Purpose: Generate BROAD semantic categories for retrieval, memory lookup, semantic search, clustering, and routing.
+*   Context Drift & Continuity Rules (Last 2-3 Exchanges):
+    *   Do NOT evaluate the latest message in isolation. Read the last 2-3 turns to track context.
+    *   If the latest message uses pronouns ("it", "they", "that code") or is an implicit continuation of the previous topic, the `topics` array MUST inherit and retain the active topics from those recent exchanges.
+    *   If the user abruptly switches topics, include the new topic as primary, but retain the previous topic if the shift is a sub-task or related pivot.
+*   General Rules:
+    *   Topics are NOT keywords. They represent the general subject area/domain of the request.
+    *   Prefer broad domains over specific terms (e.g., "networking" not "tcp packets").
+    *   Prefer categories over keywords (e.g., "machine learning" not "transformer layers").
+    *   Use 1-5 topics when possible. Maximum 8.
+    *   Remove duplicates. Order by importance.
+    *   Use lowercase unless it is a proper noun.
+    *   If the entire recent window and latest message contain ONLY a greeting with no question/task, use ["greeting"].
 
 Topic selection guidance:
 
-*   For technology: networking, operating systems, programming, web development, databases, devops, cybersecurity, mobile development, version control, artificial intelligence, machine learning, deep learning, computer vision, natural language processing, reinforcement learning, data science
-*   For finance: finance, stock market, cryptocurrency, personal finance, economics
-*   For science: mathematics, physics, chemistry, biology
-*   For creative: design, graphic design, video & animation, music
-*   For entertainment: anime, gaming, movies & tv, sports
-*   For career: career, education, productivity
-*   For lifestyle: health, travel, food
-*   For general: general knowledge, current events, social
+*   Technology: networking, operating systems, programming, web development, databases, devops, cybersecurity, mobile development, version control, artificial intelligence, machine learning, deep learning, computer vision, natural language processing, reinforcement learning, data science
+*   Finance: finance, stock market, cryptocurrency, personal finance, economics
+*   Science: mathematics, physics, chemistry, biology
+*   Creative: design, graphic design, video & animation, music
+*   Entertainment: anime, gaming, movies & tv, sports
+*   Career: career, education, productivity
+*   Lifestyle: health, travel, food
+*   General: general knowledge, current events, social, greeting
 
-############################################  
-TOPIC SELECTION EXAMPLES  
-############################################  
-"explain tcp" → ["networking"]  
-"how do transformers work in ml" → ["machine learning", "deep learning"]  
-"best isekai anime" → ["anime"]  
-"train a cnn on images" → ["deep learning", "computer vision"]  
-"docker compose tutorial" → ["devops"] 
-"bitcoin price today" → ["cryptocurrency"]  
-"how to crack a faang interview" → ["career", "programming"]  
-"explain backpropagation" → ["deep learning"]  
-"what is inflation" → ["economics"]
-
-Bad: ["tcp", "packets", "three-way handshake"]  
-Good: ["networking"]
-
-Bad: ["transformers", "attention", "layers"]  
-Good: ["machine learning", "deep learning"]
-
-Bad: ["naruto", "anime fights", "jutsu"]  
-Good: ["anime"]
-'''
+facts:
+- Compare new exchanges against old_facts.
+- If an exchange updates an existing fact, overwrite it.
+- If an exchange adds detail to an existing fact, merge them into one precise point.
+- If an exchange introduces a brand new fact, append it.
+- If an old fact was not touched by any exchange, keep it as-is.
+- Output a single flat list of all resulting facts.
+- Facts must be short atomic fragments. No paragraphs.
+- Only include user-specific facts: preferences, goals, tools, constraints, timelines, numbers.
+"""
 complex_rag = sqlite3.connect("../Data/chat_data/complex_rag.db")
 cursor_complex_rag = complex_rag.cursor()
 
 cursor_complex_rag.execute("CREATE TABLE IF NOT EXISTS master_table("
                            "tables_name TEXT PRIMARY KEY, group_embeddings BLOB,count INT,topics TEXT"
                            ");")
+
+def count_tokens(text):
+    return len(enc.encode(text))
 
 def load_facts():
     try:
@@ -141,26 +119,80 @@ def write_facts(facts):
     with open("../Data/docs/facts.json", "w") as f:
         json.dump(facts, f,indent=4)
 
+def divide_sections(exchanges):
+    chunks = []
+    cur_chunk = []
+
+    for exchange in exchanges:
+        curr = cur_chunk.copy()
+        curr.append(exchange)
+        cur_token_len = len(enc.encode(" ".join(curr)))
+
+        if cur_token_len > 6000:
+            chunks.append(cur_chunk)
+            cur_chunk = [exchange]
+        else:
+            cur_chunk.append(exchange)
+
+    embeddings = []
+
+    for chunk in chunks:
+        embeddings.extend(np.array(get_embedding(chunk),dtype=np.float32))
+
+    embeddings = np.array(embeddings)
+    norm_embeddings = embeddings / np.linalg.norm(embeddings,axis=1,keepdims=True)
+
+    groups = util.community_detection(norm_embeddings,min_community_size=1,threshold=0.6)
+
+    grouped_exchanges = [[exchanges[i] for i in group] for group in groups]
+
+    return grouped_exchanges,groups
+
 def rag_query(hist):
     msg = ""
+    exchange_count = 0
 
     for i,m in enumerate(hist):
         if i % 2 == 0:
-            msg += f"{i}: User: {m} \nASSISTANT: {hist[i+1]}\n"
+            msg += f"{exchange_count}: \n"
+            msg += f"User: {m} \nASSISTANT: {hist[i+1]}\n"
+            exchange_count +=1
 
     facts_msg = ", ".join(load_facts())
 
-    response = loader.groq_client.chat.completions.create(model=summary_model, messages=[{"role": "system", "content":sys_prompt + "\nFacts -> " + facts_msg}, {"role": "user", "content":msg}])
-    raw = response.choices[0].message.content.strip()
+    parsed = get_response(query=msg,sys_prompt=f"{sys_prompt}\nFacts: {facts_msg}")
 
-    try:
-        return json.loads(raw)
-    except json.JSONDecodeError:
-        print(f"Failed to parse raw output: {raw}")
-        return []
+    exchanges = [f"{hist[i]} \n{hist[i+1]} \n" for i in parsed["useful_exchanges"]]
+
+    sections,group_ids = divide_sections(exchanges)
+
+    topics = parsed["topics"]
+
+    sectioned_topics = [[topics[i] for i in idx] for idx in group_ids]
+
+    return parsed,sections,sectioned_topics
+
+def add_to_rag(hist):
+    parsed,sections,sectioned_topics = rag_query(hist)
+
+    facts = parsed["facts"]
+
+    for section,topic in zip(sections,sectioned_topics):
+        cur_section_text = "\n".join(section)
+        cur_section_text += f"\nTopics --> {', '.join(topic)}\n"
+
+        embedding = get_embedding([cur_section_text])[0]
+        embedding = np.array(embedding,dtype=np.float32)
+
+        groups = compare_embedding_master_table(embedding,5)
+
+        if groups:
+            for group in groups:
+                pass
+
 
 def get_embedding(exchange):
-    response = loader.lm_client.embeddings.create(model=embeddings_model, input=exchange)
+    response = loader.ollama_client.embeddings.create(model=embeddings_model, input=exchange)
     return response.data[0].embedding
 
 def add_new_group(exchange, embedding, topics,date):
@@ -177,12 +209,11 @@ def add_new_group(exchange, embedding, topics,date):
     complex_rag.commit()
 
 def add_turn(hist):
-    results = rag_query(hist)
-    f = []
-
+    results,exchanges = rag_query(hist)
+    topics = results["topics"]
+    facts = results["facts"]
     for i, result in enumerate(results):
-        console.print("[dim]Initiated Save[/dim]")
-        cur_exchange = exchange
+        cur_exchange = exchanges[i]
         f = result["facts"]
         cur_topics = result["topics"]
 

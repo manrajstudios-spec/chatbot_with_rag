@@ -92,7 +92,7 @@ EXAMPLE OUTPUT:
     """
 
     m = [{"role":"system","content":f"{sys_prompt}"},{"role":"user","content":f"Doc Chunks: {query}"}]
-    response = loader.lm_client.chat.completions.create(model=summary_model, messages=m)
+    response = loader.ollama_client.chat.completions.create(model=summary_model, messages=m)
 
     raw = response.choices[0].message.content
 
@@ -106,7 +106,7 @@ EXAMPLE OUTPUT:
         return []
 
 def get_embedding(query):
-    response = loader.lm_client.embeddings.create(model=embeddings_model, input=query)
+    response = loader.ollama_client.embeddings.create(model=embeddings_model, input=query)
 
     return response.data[0].embedding
 

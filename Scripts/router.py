@@ -144,7 +144,7 @@ route_model = "openai/gpt-oss-120b"
 embedding_model = "text-embedding-embeddinggemma-300m"
 
 def embed_chunks(chunks):
-    embedding = loader.lm_client.embeddings.create(model=embedding_model, input=chunks)
+    embedding = loader.ollama_client.embeddings.create(model=embedding_model, input=chunks)
 
     return embedding.data[0].embedding
 

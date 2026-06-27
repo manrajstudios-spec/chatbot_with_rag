@@ -3,7 +3,7 @@ import json
 import loader
 import pdfplumber
 import numpy as np
-from loader import console
+from loader import console,get_embedding,get_response
 from tkinter import Tk,filedialog
 from graph_search import compare_embed,make_graph
 
@@ -91,10 +91,7 @@ EXAMPLE OUTPUT:
 ]
     """
 
-    m = [{"role":"system","content":f"{sys_prompt}"},{"role":"user","content":f"Doc Chunks: {query}"}]
-    response = loader.ollama_client.chat.completions.create(model=summary_model, messages=m)
-
-    raw = response.choices[0].message.content
+    raw = get_response(query,sys_prompt)
 
     if raw:
         try:
@@ -104,11 +101,6 @@ EXAMPLE OUTPUT:
             return []
     else:
         return []
-
-def get_embedding(query):
-    response = loader.ollama_client.embeddings.create(model=embeddings_model, input=query)
-
-    return response.data[0].embedding
 
 def clean_text(text):
     text = re.sub(r'\n+', '\n', text)
@@ -169,7 +161,6 @@ def insert_doc():
             with_summary = True
 
         add_doc(filepath,with_summary)
-
 
 def make_chunks(t):
     max_limit = 2000
@@ -242,7 +233,7 @@ def add_doc(doc_path,with_summary=False):
         summaries = make_summaries(batches)
 
         for summary in summaries:
-            e = get_embedding(summary["summary"])
+            e = np.array(get_embedding([summary["summary"]])[0],dtype=np.float32)
             embeddings.append(e)
 
             if not summary["key_words"]:
@@ -253,7 +244,7 @@ def add_doc(doc_path,with_summary=False):
         for chunk in chunks:
             kw = loader.extract_keywords(chunk)
             key_words.extend(kw)
-            e = get_embedding(chunk + f"Keywords: {", ".join(kw)}")
+            e = np.array(get_embedding([chunk + f"Keywords: {", ".join(kw)}"])[0],dtype=np.float32)
             embeddings.append(e)
 
     np_keywords = np.array(key_words,dtype=object)
@@ -369,7 +360,7 @@ def unload_docs(loaded_docs):
 
 def compare_msg_doc(msg, loaded_docs, k):
     key_words = loader.extract_keywords(msg)
-    embedded_msg = np.array(get_embedding(msg + f"KeyWords: {", ".join(key_words)}"),dtype=np.float32).flatten()
+    embedded_msg = np.array(get_embedding([msg + f"KeyWords: {", ".join(key_words)}"])[0],dtype=np.float32).flatten()
 
     similar_chunks = []
 
@@ -377,8 +368,8 @@ def compare_msg_doc(msg, loaded_docs, k):
         ids = compare_embed(doc["embeddings"],embedded_msg,doc["file_name"],0.8,5)
         chunks = doc["doc_data"].split("\n")
 
-        for i,chunk in enumerate(chunks):
-            if i in ids:
+        for k,chunk in enumerate(chunks):
+            if k in ids:
                 similar_chunks.append(chunk)
 
         similar_chunks.append("Next Doc Data Starts Here: ")

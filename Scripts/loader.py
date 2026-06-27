@@ -1,6 +1,7 @@
 import os
 import json
 import spacy
+import tiktoken
 import numpy as np
 from openai import OpenAI
 from keybert import KeyBERT
@@ -8,26 +9,26 @@ from dotenv import load_dotenv
 from rich.console import Console
 # from transformers import AutoTokenizer,AutoModelForSequenceClassification
 
+enc = tiktoken.get_encoding("cl100k_base")
 console = Console()
-
 load_dotenv()
-
 ky = KeyBERT()
-api_key = os.getenv("groq")
+api_key = os.getenv("groq_api")
 
 nlp = spacy.load('en_core_web_sm')
 nlp.enable_pipe('senter')
 
-
 groq_client = OpenAI(base_url="https://api.groq.com/openai/v1", api_key=api_key)
-ollama_client = OpenAI(base_url="http://127.0.0.1:1234/v1", api_key="lm_studio")
+ollama_client = OpenAI(base_url="http://localhost:11434/v1", api_key="ollama")
 
-
-embedding_model = "nomic-embed-text-v2-moe"
+embedding_model = "embeddinggemma:300m"
 main_model = "openai/gpt-oss-120b"
 
 # tokenizer = AutoTokenizer.from_pretrained("/home/manraj_studios/PycharmProjects/Yuzu-Ai-Companion/Model/intent_tokenizer")
 # model = AutoModelForSequenceClassification.from_pretrained("/home/manraj_studios/PycharmProjects/Yuzu-Ai-Companion/Model/intent_clf")
+
+def count_tokens(text):
+    return len(enc.encode(text))
 
 def make_sentences(text):
     sents = nlp(text).sents
@@ -38,6 +39,8 @@ def extract_keywords(text):
     return [key[0] for key in keys]
 
 def get_embedding(text_list):
+    text_len = count_tokens(" ".join(text_list))
+
     response = ollama_client.embeddings.create(model=embedding_model,input=text_list)
 
     embeddings = [item.embedding for item in response.data]

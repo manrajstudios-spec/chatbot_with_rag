@@ -7,7 +7,7 @@ import numpy as np
 from datetime import datetime
 from sentence_transformers import util
 from loader import console,get_response,get_embedding
-from graph_search import compare_embed,make_graph,add_to_graph
+from graph_search import compare_embed,make_graph,add_in_graph
 
 # Fixes Left
 
@@ -102,7 +102,7 @@ complex_rag = sqlite3.connect("../Data/chat_data/complex_rag.db")
 cursor_complex_rag = complex_rag.cursor()
 
 cursor_complex_rag.execute("CREATE TABLE IF NOT EXISTS master_table("
-                           "tables_name TEXT PRIMARY KEY, group_embeddings BLOB,count INT,topics TEXT"
+                           "tables_name TEXT PRIMARY KEY, group_mean BLOB,count INT,topics TEXT"
                            ");")
 
 def count_tokens(text):
@@ -130,9 +130,16 @@ def divide_sections(exchanges):
 
         if cur_token_len > 6000:
             chunks.append(cur_chunk)
+
+            if len(enc.encode(exchange)) > 6000:
+                exchange = exchange[:6000]
+
             cur_chunk = [exchange]
         else:
             cur_chunk.append(exchange)
+
+    if cur_chunk:
+        chunks.append(cur_chunk)
 
     embeddings = []
 
@@ -146,7 +153,7 @@ def divide_sections(exchanges):
 
     grouped_exchanges = [[exchanges[i] for i in group] for group in groups]
 
-    return grouped_exchanges,groups
+    return grouped_exchanges,groups,embeddings
 
 def rag_query(hist):
     msg = ""
@@ -164,105 +171,19 @@ def rag_query(hist):
 
     exchanges = [f"{hist[i]} \n{hist[i+1]} \n" for i in parsed["useful_exchanges"]]
 
-    sections,group_ids = divide_sections(exchanges)
+    sections,group_ids,embedded_exchange = divide_sections(exchanges)
 
     topics = parsed["topics"]
 
     sectioned_topics = [[topics[i] for i in idx] for idx in group_ids]
+    sectioned_embedded_exchanges = [[embedded_exchange[i] for i in idx] for idx in group_ids]
 
-    return parsed,sections,sectioned_topics
-
-def add_to_rag(hist):
-    parsed,sections,sectioned_topics = rag_query(hist)
-
-    facts = parsed["facts"]
-
-    for section,topic in zip(sections,sectioned_topics):
-        cur_section_text = "\n".join(section)
-        cur_section_text += f"\nTopics --> {', '.join(topic)}\n"
-
-        embedding = get_embedding([cur_section_text])[0]
-        embedding = np.array(embedding,dtype=np.float32)
-
-        groups = compare_embedding_master_table(embedding,5)
-
-        if groups:
-            for group in groups:
-                pass
-
-
-def get_embedding(exchange):
-    response = loader.ollama_client.embeddings.create(model=embeddings_model, input=exchange)
-    return response.data[0].embedding
-
-def add_new_group(exchange, embedding, topics,date):
-    group_name = str(uuid.uuid4()).replace("-", "")
-
-    cursor_complex_rag.execute(f'CREATE TABLE "{group_name}"(id INTEGER PRIMARY KEY AUTOINCREMENT,exchange TEXT,embedding BLOB,topics TEXT,date TEXT); ')
-    cursor_complex_rag.execute(
-        f'INSERT INTO "{group_name}" (exchange, embedding,topics,date) VALUES (?, ?,?,?)',(exchange, np.array(embedding, dtype=np.float32).tobytes(), ", ".join(topics),date))
-    complex_rag.commit()
-
-    cursor_complex_rag.execute("INSERT INTO master_table (tables_name, group_embeddings, count, topics) VALUES (?, ?, ?, ?)",(group_name, np.array(embedding, dtype=np.float32).tobytes(), 1, ", ".join(topics)))
-
-    make_graph(np.array(embedding,dtype=np.float32), group_name, True)
-    complex_rag.commit()
-
-def add_turn(hist):
-    results,exchanges = rag_query(hist)
-    topics = results["topics"]
-    facts = results["facts"]
-    for i, result in enumerate(results):
-        cur_exchange = exchanges[i]
-        f = result["facts"]
-        cur_topics = result["topics"]
-
-        cur_exchange += f"\nTopics: {", ".join(cur_topics)}"
-        embedding = np.array(get_embedding(cur_exchange), dtype=np.float32).flatten()
-        group_names = compare_embedding_master_table(embedding, 4)
-
-        now = datetime.now()
-        date = now.strftime('%A, %d %B %Y')
-
-        if group_names:
-            for name in group_names:
-                cursor_complex_rag.execute(f'SELECT embedding FROM "{name}"')
-                row = cursor_complex_rag.fetchall()
-
-                embeddings_all = [np.frombuffer(r[0],dtype=np.float32) for r in row]
-
-                add_to_graph(name,np.array(embeddings_all,dtype=np.float32),embedding)
-
-                cursor_complex_rag.execute(f'INSERT INTO "{name}" (exchange, embedding,topics,date) VALUES (?, ?,?,?)',(cur_exchange, np.array(embedding, dtype=np.float32).tobytes(),", ".join(cur_topics),date))
-                complex_rag.commit()
-
-                cursor_complex_rag.execute('SELECT count,topics,group_embeddings FROM master_table WHERE tables_name = ?', (name,))
-
-                row = cursor_complex_rag.fetchone()
-                count = row[0]
-                topics = row[1].split(", ")
-                mean = np.frombuffer(row[2],dtype=np.float32)
-                mean = np.array(mean,dtype=np.float32).flatten()
-                all_topics = list(set(topics + cur_topics))
-
-                new_mean = (((mean * count) + embedding) / (count + 1))
-
-                cursor_complex_rag.execute(
-                    'UPDATE master_table SET count=?, topics=?, group_embeddings=? WHERE tables_name=?',
-                    (count+1, ", ".join(all_topics),new_mean.tobytes(), name))
-
-                console.print("[dim]Old Group[/dim]")
-
-        else:
-            add_new_group(cur_exchange,embedding,cur_topics,date)
-            console.print("[dim]New Group[/dim]")
-
-    write_facts(f)
+    return parsed,sections,sectioned_topics,sectioned_embedded_exchanges
 
 def compare_embedding_master_table(embedding, k):
     console.print("[dim]Getting matched Groups[/dim]")
 
-    cursor_complex_rag.execute("SELECT tables_name,group_embeddings FROM master_table")
+    cursor_complex_rag.execute("SELECT tables_name,group_mean FROM master_table")
     rows = cursor_complex_rag.fetchall()
 
     if not rows:
@@ -311,8 +232,85 @@ def compare_embed_group(group_name, u_e):
 
     return [summaries[i] for i in ids]
 
+def add_new_group(exchanges, embeddings, topics, date):
+    group_name = str(uuid.uuid4()).replace("-", "")
+
+    cursor_complex_rag.execute(
+        f'CREATE TABLE "{group_name}" (id INTEGER PRIMARY KEY AUTOINCREMENT,exchange TEXT,embedding BLOB,topics TEXT,date TEXT); ')
+    complex_rag.commit()
+
+    for cur_embedding, cur_topics, cur_exchange in zip(embeddings, topics, exchanges):
+        cursor_complex_rag.execute(f'INSERT INTO "{group_name}" (exchange,embedding,topics,date) VALUES (?,?,?,?) ',
+                                   (cur_exchange, cur_embedding.tobytes(), ", ".join(cur_topics), date))
+        complex_rag.commit()
+
+    all_topics = []
+    for t in topics:
+        all_topics.extend(t)
+    all_topics = set(all_topics)
+
+    norm_embeddings = embeddings / np.linalg.norm(embeddings, axis=1, keepdims=True)
+
+    cursor_complex_rag.execute(f'INSERT INTO master_table(tables_name,group_mean,count,topics) VALUES (?,?,?,?)',
+                               (group_name, np.mean(norm_embeddings, axis=0).tobytes(), len(embeddings), ", ".join(all_topics)))
+    complex_rag.commit()
+    make_graph(embeddings, group_name, True)
+
+def add_to_rag(hist):
+    parsed,sections,sectioned_topics,embedded_exchanges = rag_query(hist)
+    facts = parsed["facts"]
+    write_facts(facts)
+
+    now = datetime.now()
+    date = now.strftime('%A, %d %B %Y')
+
+    for section_exchange,section_topics,section_embedd in zip(sections,sectioned_topics,embedded_exchanges):
+        cur_section_text = "\n".join(section_exchange)
+        cur_section_text += f"\nTopics --> {', '.join(section_topics)}\n"
+
+        cur_section_embeddings = get_embedding([cur_section_text])
+        cur_section_embeddings = np.array(cur_section_embeddings,dtype=np.float32)
+
+        groups = compare_embedding_master_table(cur_section_embeddings,5)
+
+        if groups:
+            for group in groups:
+                cursor_complex_rag.execute(f'SELECT embedding FROM "{group}"')
+                rows = cursor_complex_rag.fetchall()
+
+                cur_table_embeddings = [np.frombuffer(row[0],dtype=np.float32) for row in rows]
+                cur_table_embeddings = np.array(cur_table_embeddings)
+                add_in_graph(group,cur_section_embeddings,section_embedd)
+
+                for cur_embed,cur_exchange,cur_topics in zip(section_embedd,section_exchange,section_topics):
+                    cursor_complex_rag.execute(f'INSERT INTO "{group}" (exchange,embedding,topics,date) VALUES(?,?,?,?)',(cur_exchange,cur_embed,", ".join(cur_topics),date))
+                    complex_rag.commit()
+
+                cursor_complex_rag.execute(f'SELECT count,topics,group_mean FROM master_table WHERE tables_name = ?',(group,))
+
+                row = cursor_complex_rag.fetchone()
+
+                count, all_topics_str, mean_blob = row[0], row[1], row[2]
+
+                all_topics = all_topics_str.split(", ")
+                count += len(cur_table_embeddings)
+
+                mean_embedding = np.frombuffer(mean_blob, dtype=np.float32)
+                norm_embedding = cur_table_embeddings / np.linalg.norm(cur_table_embeddings,axis=1,keepdims=True)
+                stacked = np.vstack([norm_embedding,mean_embedding])
+                new_mean = np.mean(stacked,axis=0)
+
+                for t in section_topics:
+                    all_topics.extend(t)
+
+                all_topics = set(all_topics)
+
+                cursor_complex_rag.execute(f'UPDATE master_table SET count=?,topics=?,group_mean=? WHERE tables_name=?',(count,", ".join(all_topics),new_mean.tobytes(),group))
+        else:
+            add_new_group(section_exchange,section_embedd,section_topics,date)
+
 def get_matches_rag(user, k, topics):
-    embedding = get_embedding(user + f"Topics {topics}")
+    embedding = get_embedding([user + f"Topics {topics}"])[0]
     embedding = np.array(embedding,dtype=np.float32).flatten()
     matches = compare_embedding_master_table(embedding, k)
     summaries=set()

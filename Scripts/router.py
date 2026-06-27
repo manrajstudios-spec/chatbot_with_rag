@@ -6,11 +6,11 @@ import subprocess
 import trafilatura
 import numpy as np
 from ddgs import DDGS
-from loader import console
 from urllib.parse import quote
 from doc_reader import make_chunks
 from rapidfuzz import process, fuzz
 from graph_search import make_graph,check_graph
+from loader import console,get_embedding,get_response
 all_apps = set()
 
 for directory in os.environ["PATH"].split(":"):
@@ -143,24 +143,13 @@ Strict JSON Schema Definition:
 route_model = "openai/gpt-oss-120b"
 embedding_model = "text-embedding-embeddinggemma-300m"
 
-def embed_chunks(chunks):
-    embedding = loader.ollama_client.embeddings.create(model=embedding_model, input=chunks)
-
-    return embedding.data[0].embedding
-
 def find_app(query, app_names, threshold=90):
     match = process.extractOne(query.lower(),app_names,scorer=fuzz.WRatio,score_cutoff=threshold)
 
     return match[0] if match else ""
 
-def route_msg(p_exchanges,p_exchanges_text):
-    exchanges = [{"role":"system","content":sys_prompt}]
-
-    exchanges.extend(p_exchanges)
-
-    response = loader.groq_client.chat.completions.create(model=route_model,messages=exchanges)
-
-    raw = json.loads(response.choices[0].message.content)
+def route_msg(p_exchanges_text):
+    raw = get_response(p_exchanges_text,sys_prompt)
 
     search_queries = raw["search_queries"]
     open_items = raw["open_items"]
@@ -177,10 +166,12 @@ def route_msg(p_exchanges,p_exchanges_text):
     if open_items:
         for item in open_items:
             app_name = find_app(item,all_apps)
+
             try:
                 subprocess.Popen([app_name])
-            except:
+            except FileNotFoundError as e:
                 webbrowser.open(f"https://www.google.com/search?q={quote(item)}")
+                print(f"APP ERROR: {e}")
 
     return searched[:4000],topics,rag_needed,search_clarification if search_needed else ""
 
@@ -189,7 +180,7 @@ def web_search(queries, to_ask):
         threshold = json.load(f)["web_search"]
 
     all_info = []
-    query_embed = embed_chunks(to_ask)
+    query_embed = np.array(get_embedding([to_ask])[0],dtype=np.float32)
     query_embed = np.array(query_embed, dtype=np.float32)
 
     for query in queries:
@@ -219,14 +210,15 @@ def web_search(queries, to_ask):
                     embeddings = []
 
                     for chunk in chunks:
-                        embeddings.append(embed_chunks(chunk.strip()))
+                        embeddings.append(np.array(get_embedding([chunk.strip()])[0],dtype=np.float32))
 
                     embeddings = np.array(embeddings, dtype=np.float32)
 
                     graph, start = make_graph(embeddings, "abc", False)
 
-                    ids = check_graph(query_embed, embeddings, graph, threshold, start)
+                    ids = check_graph(query_embed=query_embed, all_embeds=embeddings, graph=graph, threshold=threshold, center_node=start)
 
+                    console.print(f"Ids: {ids}")
                     for i in ids:
                         cur_query.append(chunks[i].strip())
 

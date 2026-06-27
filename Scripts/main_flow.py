@@ -7,7 +7,7 @@ from datetime import datetime
 from rich.panel import Panel
 from rich.prompt import Prompt
 from retrieving_clf import get_result
-from rag_system import add_turn, get_matches_rag
+from rag_system import add_to_rag, get_matches_rag
 from doc_reader import load_docs, unload_docs, compare_msg_doc
 
 sys_prompt = """
@@ -56,15 +56,15 @@ n = 20
 sys = {"role": "system", "content": sys_prompt}
 exchanges = []
 speech = False
-meathod_selected = False
+method_selected = False
 
 number_of_prev_msg_to_use_for_router = 5
 
 def ask_user(input_msg):
     while True:
-        user_input = Prompt.ask(f"[bold cyan]{input_msg}[/bold cyan]")
-        if user_input:
-            return user_input
+        u_i = Prompt.ask(f"[bold cyan]{input_msg}[/bold cyan]")
+        if u_i:
+            return u_i
 
 
 def retrieve_summary(user_query):
@@ -79,7 +79,7 @@ def make_hist():
             query.append(q["content"])
             query.append((exchanges[i + 1]["content"]))
 
-    add_turn(query)
+    add_to_rag(query)
 
     exchanges = exchanges[:n]
 
@@ -87,10 +87,10 @@ def make_hist():
 loaded_docs = []
 
 while True:
-    if not meathod_selected:
+    if not method_selected:
         input_meathod = ask_user(
             "How Would yu Like To Chat 1 For Written Query 0 For Speaking Your Query Wake Word Is Alexa")
-        meathod_selected = True
+        method_selected = True
 
         if input_meathod == "1":
             speech = False
@@ -133,16 +133,16 @@ while True:
         to_give_text = "\n".join([f"User: {to_give[i]}\n Assistant: {to_give[i+1]}" for i in range(len(to_give)-2)])
         to_give_text += f"\nUser: {to_give[-1]}"
 
-        searched_info ,topics ,needs_rag ,search_clarification = route_msg(to_give,to_give_text)
+        searched_info ,topics ,needs_rag ,search_clarification = route_msg(to_give_text)
 
-        if not searched_info and search_clarification:
+        if searched_info:
             search_query = f"""The following information was retrieved from recent web searches. Use it as your primary source of truth when relevant. This information may be more up-to-date than your internal knowledge.
             {searched_info} """ if searched_info else ""
 
             info = search_query
 
         if loaded_docs:
-            relevant_info_doc = compare_msg_doc(user_input, loaded_docs, 10)
+            relevant_info_doc = compare_msg_doc(to_give_text, loaded_docs, 10)
             console.print(f"[dim]DEBUG {relevant_info_doc}[/dim]")
 
             info += f"\n\nThis Info Is Retrieved From Document Given By User Use Relevant Info From Doc As Needed {relevant_info_doc}"
@@ -186,7 +186,8 @@ while True:
                 if token:
                     reply += token
 
-            reply += f"\n{search_clarification}"
+            if search_clarification:
+                reply += f"\n{search_clarification}"
 
         console.print(Panel(reply, title="[bold green]Yuzu[/bold green]", border_style="green"))
         exchanges.append({"role": "assistant", "content": reply})

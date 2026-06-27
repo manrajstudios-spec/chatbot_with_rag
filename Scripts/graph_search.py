@@ -44,20 +44,9 @@ def make_graph(all_embeds,name,save=True):
         data.append({"name":name,"graph":graph,"center_node":center_node})
         save_data(data)
 
-    return graph
+    return graph,center_node
 
-def add_to_graph(name,all_embeds,query_embed):
-    data = load_data()
-
-    center = 0
-    graph = []
-
-    for d in data:
-        if d["name"] == name:
-            center = d["center_node"]
-            graph = d["graph"]
-            break
-
+def add_to_graph(name,all_embeds,query_embed,graph,center):
     all_embeds = np.array(all_embeds, dtype=np.float32)
     norms = np.linalg.norm(all_embeds, axis=1, keepdims=True)
     all_embeds_norm = all_embeds / np.clip(norms, 1e-8, None)
@@ -93,23 +82,43 @@ def add_to_graph(name,all_embeds,query_embed):
 
         stack.extend(graph[cur_id])
 
-    graph.append(list(similar)[:min(8,len(similar)-1)])
+    graph.append(list(similar)[:min(8, len(similar) - 1)])
 
     for s in similar:
-        graph[s].append(len(graph)-1)
+        graph[s].append(len(graph) - 1)
 
+    all = np.vstack([all_embeds_norm,query_norm])
+    mean = np.mean(all, axis=0)
+    mean_norm = np.linalg.norm(mean)
+
+    center = int(np.argmax(all @ mean))
+
+    return graph,center
+
+def add_in_graph(name,all_embeds,query_embed):
     data = load_data()
+    graph = []
+    center = None
+
+    for d in data:
+        if d["name"] == name:
+            graph = d["graph"]
+            center = d["center_node"]
+
+    if query_embed.ndim == 1:
+        graph,center = add_to_graph(name,all_embeds,query_embed,graph,center)
+    else:
+        for q in query_embed:
+            graph,center = add_to_graph(name,all_embeds,q,graph,center)
 
     for d in data:
         if d["name"] == name:
             d["graph"] = graph
-            break
+            d["center_node"] = center
 
-    save_data(data)
+    save_data(graph)
 
-def check_graph(all_embeds, query_embed, graph, threshold, max_search=5,max_depth=10):
-    center_node = graph["center_node"]
-
+def check_graph(all_embeds, query_embed, graph, threshold, max_search=5,max_depth=10,center_node=None):
     query_norm = query_embed/np.linalg.norm(query_embed)
     all_embeds_norm = all_embeds/np.linalg.norm(all_embeds,axis=1,keepdims=True)
 

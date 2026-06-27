@@ -2,5 +2,5 @@
     "master_tabel_threshold": 0.54,
     "within_tabel": 0.45,
     "doc_chunk": 0.6,
-    "web_search": 0.38
+    "web_search": 0.1
 }

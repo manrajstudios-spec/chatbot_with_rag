@@ -38,3 +38,7 @@ rich
 python-dotenv
 openai
 spacy
+webrtcvad-wheels
+scipy
+scipy
+sounddevice

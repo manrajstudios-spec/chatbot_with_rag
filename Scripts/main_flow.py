@@ -133,7 +133,12 @@ while True:
         to_give_text = "\n".join([f"User: {to_give[i]}\n Assistant: {to_give[i+1]}" for i in range(len(to_give)-2)])
         to_give_text += f"\nUser: {to_give[-1]}"
 
-        searched_info ,topics ,needs_rag ,search_clarification = route_msg(to_give_text)
+        searched_info ,topics ,needs_rag ,search_clarification,modified_query = route_msg(to_give_text)
+        if modified_query:
+            to_give[-1] = {"role":"user","content":modified_query}
+
+        to_give_text = "\n".join([f"{to_give[i]}\n{to_give[i+1]}" for i in range(len(to_give)-2)])
+        to_give_text += f"\n{to_give[-1]}"
 
         if searched_info:
             search_query = f"""The following information was retrieved from recent web searches. Use it as your primary source of truth when relevant. This information may be more up-to-date than your internal knowledge.
@@ -142,10 +147,10 @@ while True:
             info = search_query
 
         if loaded_docs:
-            relevant_info_doc = compare_msg_doc(to_give_text, loaded_docs, 10)
+            relevant_info_doc = compare_msg_doc(to_give_text, loaded_docs)
             console.print(f"[dim]DEBUG {relevant_info_doc}[/dim]")
 
-            info += f"\n\nThis Info Is Retrieved From Document Given By User Use Relevant Info From Doc As Needed {relevant_info_doc}"
+            info += f"\n\nThis Info Is Retrieved From Document Given By User Use Info From Doc As Needed Also Yu Can Mention As Per Document Yu Provided: {relevant_info_doc}"
 
         if needs_rag:
             relevant_exchanges, facts = get_matches_rag(to_give_text, 4, topics)

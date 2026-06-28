@@ -42,3 +42,4 @@ webrtcvad-wheels
 scipy
 scipy
 sounddevice
+fitz

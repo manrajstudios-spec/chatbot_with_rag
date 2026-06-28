@@ -22,6 +22,7 @@ sys_prompt = """Act like a senior NLP architect, query understanding expert, ret
 
 Return exactly this schema:  
 {  
+"modified_query":"string"
 "topics": ["string"],  
 "search_queries": ["string"],  
 "open_items": ["string"],  
@@ -32,6 +33,14 @@ Return exactly this schema:
 
 ### ========================================================================  
 SECTION 1: FIELD DEFINITIONS & RULES
+
+FIELD 0 : modified_query
+Analyze the user message and populate "modified_query" as follows:
+- If the message is a greeting, filler, or casual small talk with no retrievable intent → null
+- If the message is clear and specific → rephrase it as a clean, neutral, third-person semantic statement capturing the core meaning (e.g. "user asks about X")
+- If the message is vague, uses pronouns, or references something without naming it ("that thing", "what we talked about", "it") → resolve the reference using conversation history and output the resolved meaning
+- If the message carries emotional context relevant to memory ("i'm tired", "that made me happy") → include the emotional context in the semantic query
+- Output should be a single concise sentence, no filler words, optimized for embedding and vector search
 
 FIELD 1: topics
 
@@ -67,6 +76,7 @@ FIELD 2: search_queries & search_clarification
     *   current events, news, weather, prices, exchange rates, stocks, crypto prices
     *   product availability, APIs, official documentation, software releases
     *   recent developments, factual web lookups, time-sensitive information
+    *   The Last User: Row In Prompt Is Users Latest Message So Generate Search Query if user asks in Input Which is Last User: And Use Previous Exchanges To Identify What needs To Be Searched
 *   Do NOT generate queries when:
     *   the task can be answered from general knowledge
     *   the task is writing, brainstorming, summarization
@@ -110,6 +120,7 @@ SECTION 2: CONVERSATIONAL CONTINUITY RULE
 Before extracting fields, evaluate if this message is a casual REPLY to a social exchange.
 
 *   If the previous AI turn was a greeting or small talk AND the current user message is a short casual response with no new task:
+    * modified_quer: ""
     *   topics: ["greeting"]
     *   search_queries: []
     *   open_items: []
@@ -128,17 +139,18 @@ SECTION 3: OUTPUT JSON FORMAT
 
 Strict JSON Schema Definition:  
 {  
-"type": "object",  
-"properties": {  
-"topics": { "type": "array", "items": { "type": "string" } },  
-"search_queries": { "type": "array", "items": { "type": "string" } },  
-"open_items": { "type": "array", "items": { "type": "string" } },  
-"search_clarification": { "type": ["string", "null"] },  
-"needs_search": { "type": "boolean" },  
-"needs_rag": { "type": "boolean" }  
-},  
-"required": ["topics", "search_queries", "open_items", "search_clarification", "needs_search", "needs_rag"],  
-"additionalProperties": false  
+  "type": "object",  
+  "properties": {  
+    "modified_query": { "type": ["string", "null"] },
+    "topics": { "type": "array", "items": { "type": "string" } },  
+    "search_queries": { "type": "array", "items": { "type": "string" } },  
+    "open_items": { "type": "array", "items": { "type": "string" } },  
+    "search_clarification": { "type": ["string", "null"] },  
+    "needs_search": { "type": "boolean" },  
+    "needs_rag": { "type": "boolean" }  
+  },  
+  "required": ["modified_query", "semantic_query", "topics", "search_queries", "open_items", "search_clarification", "needs_search", "needs_rag"],  
+  "additionalProperties": false  
 }"""
 route_model = "openai/gpt-oss-120b"
 embedding_model = "text-embedding-embeddinggemma-300m"
@@ -157,6 +169,7 @@ def route_msg(p_exchanges_text):
     search_clarification = raw["search_clarification"]
     search_needed = raw["needs_search"]
     rag_needed = raw["needs_rag"]
+    modified_query = raw["modified_query"]
 
     searched = []
 
@@ -173,7 +186,7 @@ def route_msg(p_exchanges_text):
                 webbrowser.open(f"https://www.google.com/search?q={quote(item)}")
                 print(f"APP ERROR: {e}")
 
-    return searched[:4000],topics,rag_needed,search_clarification if search_needed else ""
+    return searched[:4000],topics,rag_needed,search_clarification if search_needed else "",modified_query if modified_query else ""
 
 def web_search(queries, to_ask):
     with open("../Data/Config/config_json.json", "r") as f:
@@ -214,9 +227,9 @@ def web_search(queries, to_ask):
 
                     embeddings = np.array(embeddings, dtype=np.float32)
 
-                    graph, start = make_graph(embeddings, "abc", False)
+                    graph, start,all_embeds_norm = make_graph(embeddings, "abc", False)
 
-                    ids = check_graph(query_embed=query_embed, all_embeds=embeddings, graph=graph, threshold=threshold, center_node=start)
+                    ids = check_graph(query_embed=query_embed, all_embeds=all_embeds_norm, graph=graph,center_node=start)
 
                     console.print(f"Ids: {ids}")
                     for i in ids:

@@ -1,17 +1,11 @@
 import uuid
 import json
-import loader
 import sqlite3
 import tiktoken
 import numpy as np
 from datetime import datetime
 from sentence_transformers import util
 from loader import console,get_response,get_embedding
-from graph_search import compare_embed,make_graph,add_in_graph
-
-# Fixes Left
-
-# Finsih Add To Rag
 
 enc = tiktoken.get_encoding("cl100k_base")
 summary_model = "openai/gpt-oss-120b"
@@ -147,7 +141,7 @@ def divide_sections(exchanges):
         embeddings.extend(np.array(get_embedding(chunk),dtype=np.float32))
 
     embeddings = np.array(embeddings)
-    norm_embeddings = embeddings / np.linalg.norm(embeddings,axis=1,keepdims=True)
+    norm_embeddings = embeddings / np.clip(np.linalg.norm(embeddings,axis=1,keepdims=True),1e-8,None)
 
     groups = util.community_detection(norm_embeddings,min_community_size=1,threshold=0.6)
 
@@ -180,7 +174,7 @@ def rag_query(hist):
 
     return parsed,sections,sectioned_topics,sectioned_embedded_exchanges
 
-def compare_embedding_master_table(embedding, k):
+def compare_embedding_master_table(query_embedding, k):
     console.print("[dim]Getting matched Groups[/dim]")
 
     cursor_complex_rag.execute("SELECT tables_name,group_mean FROM master_table")
@@ -193,55 +187,67 @@ def compare_embedding_master_table(embedding, k):
 
     embeddings =[np.frombuffer(row[1], dtype=np.float32)for row in rows]
     embeddings = np.array(embeddings,dtype=np.float32)
-    norms = np.linalg.norm(embeddings, axis=1) * np.linalg.norm(embedding)
-    norms = np.where(norms == 0, 1e-9, norms)
 
-    similarity = (embeddings @ embedding) / norms
+    query_embedding_norm = query_embedding/np.clip(np.linalg.norm(query_embedding),1e-10,None)
+
+    similarity = embeddings @ query_embedding_norm
     threshold = 0
     console.print(f"[dim]sims_master: {similarity}[/dim]")
 
     with open("../Data/Config/config_json.json", "r") as f:
         threshold = json.load(f)["master_tabel_threshold"]
 
-    similarity_ids = similarity.argsort()[::-1]
-    selected = [i for i in similarity_ids[:min(k, len(similarity_ids))] if similarity[i] > threshold]
+    k = min(k, len(similarity))
+    if k <= 0:
+        return []
+
+    similarity_ids = np.argpartition(similarity,-k)[-k:]
+    selected = [i for i in similarity_ids if similarity[i] > threshold]
 
     return [names[i] for i in selected]
 
-def compare_embed_group(group_name, u_e):
+def compare_embed_group(group_name, query_embed):
     console.print("[dim]Re ranking in groups[/dim]")
 
-    cursor_complex_rag.execute(f'SELECT exchange,embedding,topics FROM "{group_name}"')
+    cursor_complex_rag.execute(f'SELECT exchange,sim FROM "{group_name}"')
     rows = cursor_complex_rag.fetchall()
 
-    if not rows:
-        return []
+    exchanges = [row[0] for row in rows]
+    sims = np.array([row[1] for row in rows], dtype=np.float32)
 
-    summaries:list[str] = [row[0] for row in rows]
+    cursor_complex_rag.execute(f'SELECT group_mean FROM "master_table" WHERE tables_name=?',(group_name,))
+    rows = cursor_complex_rag.fetchone()
+    mean = np.frombuffer(rows[0], dtype=np.float32)
 
-    embeddings = [np.frombuffer(row[1], dtype=np.float32)for row in rows]
-    embeddings = np.array(embeddings,dtype=np.float32)
+    query_norm = query_embed / np.clip(np.linalg.norm(query_embed), 1e-8, None)
 
-    threshold = 0
+    offset = 0.15
+    query_sim = float(mean @ query_norm)
+    ids = np.where(np.abs(sims - query_sim) <= offset)[0]
 
-    with open("../Data/Config/config_json.json", "r") as f:
-        threshold = json.load(f)["within_tabel"]
+    if len(ids) == 0:
+        ids = np.argsort(sims - query_sim)[:5]
 
-    ids = compare_embed(embeddings,u_e,group_name,threshold,5)
     console.print(f"[dim]ids: {ids}[/dim]")
 
-    return [summaries[i] for i in ids]
+    return [exchanges[i] for i in ids]
 
 def add_new_group(exchanges, embeddings, topics, date):
     group_name = str(uuid.uuid4()).replace("-", "")
 
     cursor_complex_rag.execute(
-        f'CREATE TABLE "{group_name}" (id INTEGER PRIMARY KEY AUTOINCREMENT,exchange TEXT,embedding BLOB,topics TEXT,date TEXT); ')
+        f'CREATE TABLE "{group_name}" (id INTEGER PRIMARY KEY AUTOINCREMENT,exchange TEXT,embedding BLOB,topics TEXT,date TEXT,sim REAL); ')
     complex_rag.commit()
 
-    for cur_embedding, cur_topics, cur_exchange in zip(embeddings, topics, exchanges):
-        cursor_complex_rag.execute(f'INSERT INTO "{group_name}" (exchange,embedding,topics,date) VALUES (?,?,?,?) ',
-                                   (cur_exchange, cur_embedding.tobytes(), ", ".join(cur_topics), date))
+    norm_embeddings = embeddings / np.clip(np.linalg.norm(embeddings, axis=1, keepdims=True),1e-8,None)
+    mean = np.mean(norm_embeddings, axis=0)
+    mean_norm = mean / np.clip(np.linalg.norm(mean), 1e-8, None)
+
+    sims = norm_embeddings @ mean_norm
+
+    for cur_embedding, cur_topics, cur_exchange,sim in zip(embeddings, topics, exchanges,sims):
+        cursor_complex_rag.execute(f'INSERT INTO "{group_name}" (exchange,embedding,topics,date,sim) VALUES (?,?,?,?,?) ',
+                                   (cur_exchange, cur_embedding.tobytes(), ", ".join(cur_topics), date,float(sim)))
         complex_rag.commit()
 
     all_topics = []
@@ -249,29 +255,34 @@ def add_new_group(exchanges, embeddings, topics, date):
         all_topics.extend(t)
     all_topics = set(all_topics)
 
-    norm_embeddings = embeddings / np.linalg.norm(embeddings, axis=1, keepdims=True)
-
     cursor_complex_rag.execute(f'INSERT INTO master_table(tables_name,group_mean,count,topics) VALUES (?,?,?,?)',
-                               (group_name, np.mean(norm_embeddings, axis=0).tobytes(), len(embeddings), ", ".join(all_topics)))
+                               (group_name, mean_norm.tobytes(), len(embeddings), ", ".join(all_topics)))
     complex_rag.commit()
-    make_graph(embeddings, group_name, True)
 
 def add_to_rag(hist):
-    parsed,sections,sectioned_topics,embedded_exchanges = rag_query(hist)
+    parsed,exchange_sections,sectioned_topics,embedded_exchanges = rag_query(hist)
     facts = parsed["facts"]
     write_facts(facts)
 
     now = datetime.now()
     date = now.strftime('%A, %d %B %Y')
 
-    for section_exchange,section_topics,section_embedd in zip(sections,sectioned_topics,embedded_exchanges):
-        cur_section_text = "\n".join(section_exchange)
-        cur_section_text += f"\nTopics --> {', '.join(section_topics)}\n"
+    for section_exchanges,section_topics,section_embeddings in zip(exchange_sections,sectioned_topics,embedded_exchanges):
+        section_embeddings_norm = section_embeddings / np.clip(np.linalg.norm(section_embeddings,axis=1,keepdims=True), 1e-8, None)
 
-        cur_section_embeddings = get_embedding([cur_section_text])
-        cur_section_embeddings = np.array(cur_section_embeddings,dtype=np.float32)
+        cur_section_text = "\n".join(section_exchanges)
+        flatten_cur_section_topics = []
+        for t in section_topics:
+            flatten_cur_section_topics.extend(t)
 
-        groups = compare_embedding_master_table(cur_section_embeddings,5)
+        flatten_cur_section_topics = list(set(flatten_cur_section_topics))
+
+        cur_section_text += f"\nTopics --> {', '.join(flatten_cur_section_topics)}\n"
+
+        embedded_section = get_embedding([cur_section_text])[0]
+        embedded_section = np.array(embedded_section,dtype=np.float32)
+
+        groups = compare_embedding_master_table(embedded_section,5)
 
         if groups:
             for group in groups:
@@ -280,9 +291,8 @@ def add_to_rag(hist):
 
                 cur_table_embeddings = [np.frombuffer(row[0],dtype=np.float32) for row in rows]
                 cur_table_embeddings = np.array(cur_table_embeddings)
-                add_in_graph(group,cur_section_embeddings,section_embedd)
 
-                for cur_embed,cur_exchange,cur_topics in zip(section_embedd,section_exchange,section_topics):
+                for cur_embed,cur_exchange,cur_topics in zip(section_embeddings_norm,section_exchanges,section_topics):
                     cursor_complex_rag.execute(f'INSERT INTO "{group}" (exchange,embedding,topics,date) VALUES(?,?,?,?)',(cur_exchange,cur_embed,", ".join(cur_topics),date))
                     complex_rag.commit()
 
@@ -293,21 +303,26 @@ def add_to_rag(hist):
                 count, all_topics_str, mean_blob = row[0], row[1], row[2]
 
                 all_topics = all_topics_str.split(", ")
-                count += len(cur_table_embeddings)
+                count += len(section_embeddings)
 
-                mean_embedding = np.frombuffer(mean_blob, dtype=np.float32)
-                norm_embedding = cur_table_embeddings / np.linalg.norm(cur_table_embeddings,axis=1,keepdims=True)
-                stacked = np.vstack([norm_embedding,mean_embedding])
+                table_norm_embedding = cur_table_embeddings / np.clip(np.linalg.norm(cur_table_embeddings, axis=1, keepdims=True),1e-8,None)
+                stacked = np.vstack([table_norm_embedding,section_embeddings_norm])
                 new_mean = np.mean(stacked,axis=0)
+                new_mean_norm = new_mean/np.clip(np.linalg.norm(new_mean), 1e-8, None)
 
-                for t in section_topics:
-                    all_topics.extend(t)
+                sims = stacked @ new_mean_norm
+
+                for row_id, sim in zip(range(len(sims)), sims):
+                    cursor_complex_rag.execute(f'UPDATE "{group}" SET sim=? WHERE id=?',(float(sim), row_id+1))
+
+                all_topics.extend(flatten_cur_section_topics)
 
                 all_topics = set(all_topics)
 
-                cursor_complex_rag.execute(f'UPDATE master_table SET count=?,topics=?,group_mean=? WHERE tables_name=?',(count,", ".join(all_topics),new_mean.tobytes(),group))
+                cursor_complex_rag.execute(f'UPDATE master_table SET count=?,topics=?,group_mean=? WHERE tables_name=?',(count,", ".join(all_topics),new_mean_norm.tobytes(),group))
+                complex_rag.commit()
         else:
-            add_new_group(section_exchange,section_embedd,section_topics,date)
+            add_new_group(section_exchanges,section_embeddings_norm,section_topics,date)
 
 def get_matches_rag(user, k, topics):
     embedding = get_embedding([user + f"Topics {topics}"])[0]

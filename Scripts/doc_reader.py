@@ -1,5 +1,6 @@
 import re
 import json
+import fitz
 import loader
 import pdfplumber
 import numpy as np
@@ -108,14 +109,12 @@ def clean_text(text):
     return text.strip()
 
 def read_doc(path):
+    doc = fitz.open(path)
+
     text = ""
 
-    with pdfplumber.open(path) as pdf:
-        for page in pdf.pages:
-            page_text = page.extract_text()
-
-            if page_text:
-                text += page_text
+    for page in doc:
+        text += page.get_text()
 
     return clean_text(text)
 
@@ -173,7 +172,7 @@ def make_chunks(t):
     curr_chunk_text = ""
 
     for i,sent in enumerate(sentences):
-        added = curr_chunk_text + "." + sent
+        added = curr_chunk_text + ". " + sent
 
         if len(added) < min_limit:
             curr_chunk_text += f". {sent}"
@@ -247,15 +246,9 @@ def add_doc(doc_path,with_summary=False):
             e = np.array(get_embedding([chunk + f"Keywords: {", ".join(kw)}"])[0],dtype=np.float32)
             embeddings.append(e)
 
-    np_keywords = np.array(key_words,dtype=object)
-
     np_embeddings = np.array(embeddings,dtype=np.float32)
 
-    file_name_npz = f"../Data/docs/npz_files/{file_name}.npz"
-    mean_embedding = np.mean(np_embeddings,axis=0)
-    np.savez(file_name_npz,key_words=np_keywords,embeddings=np_embeddings,mean_embedding=mean_embedding)
-
-    json_dict = {"file_name":file_name ,"npz_path":file_name_npz ,"doc_data":"\n ".join([i["summary"] for i in summaries]) if with_summary else "\n ".join([i for i in chunks])}
+    json_dict = {"file_name":file_name,"doc_data":summaries if with_summary else chunks}
 
     make_graph(np_embeddings,file_name,True)
 
@@ -333,8 +326,7 @@ def load_docs():
     loaded_docs = []
 
     for doc in selected_docs:
-        npz_file = load_npz(doc["npz_path"])
-        loaded_docs.append({"file_name":doc["file_name"],"doc_data":doc["doc_data"],"key_words":npz_file["key_words"],"embeddings":npz_file["embeddings"],"mean_embedding":npz_file["mean_embedding"]})
+        loaded_docs.append(doc)
 
     return loaded_docs
 
@@ -358,20 +350,18 @@ def unload_docs(loaded_docs):
 
             loaded_docs.pop(int(u_i) - 1)
 
-def compare_msg_doc(msg, loaded_docs, k):
+def compare_msg_doc(msg, loaded_docs):
     key_words = loader.extract_keywords(msg)
     embedded_msg = np.array(get_embedding([msg + f"KeyWords: {", ".join(key_words)}"])[0],dtype=np.float32).flatten()
 
     similar_chunks = []
 
     for i,doc in enumerate(loaded_docs):
-        ids = compare_embed(doc["embeddings"],embedded_msg,doc["file_name"],0.8,5)
-        chunks = doc["doc_data"].split("\n")
-
+        ids = compare_embed(query_embed=embedded_msg,name=doc["file_name"],depth=5)
+        chunks = doc["doc_data"]
+        print(len(chunks))
         for k,chunk in enumerate(chunks):
             if k in ids:
                 similar_chunks.append(chunk)
-
-        similar_chunks.append("Next Doc Data Starts Here: ")
 
     return "\n".join(similar_chunks)

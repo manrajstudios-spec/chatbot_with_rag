@@ -1,3 +1,5 @@
+import json
+
 import loader
 from STT import get_query
 from loader import console
@@ -52,151 +54,135 @@ YOU ARE A REAL HUMAN TEXTING CASUALLY.
 
 """
 
-n = 20
+exchanges_to_keep = 10
 sys = {"role": "system", "content": sys_prompt}
-exchanges = []
-speech = False
-method_selected = False
 
-number_of_prev_msg_to_use_for_router = 5
+number_of_prev_msg_to_use = 5
 
 def ask_user(input_msg):
-    while True:
-        u_i = Prompt.ask(f"[bold cyan]{input_msg}[/bold cyan]")
-        if u_i:
-            return u_i
-
+    with console.status("[dim]User is typing...[/dim]", spinner="dots"):
+        while True:
+            u_i = Prompt.ask(f"[bold cyan]{input_msg}[/bold cyan]")
+            if u_i:
+                return u_i
 
 def retrieve_summary(user_query):
     return get_result(user_query)
 
-
-def make_hist():
-    global exchanges
-    query = []
-    for i, q in enumerate(exchanges):
-        if i % 2 == 0:
-            query.append(q["content"])
-            query.append((exchanges[i + 1]["content"]))
-
-    add_to_rag(query)
-
-    exchanges = exchanges[:n]
-
+def make_hist(to_add):
+    add_to_rag(to_add[:-exchanges_to_keep])
+    return to_add[-exchanges_to_keep:]
 
 loaded_docs = []
 
+input_method = ""
+
+try:
+    with open("../Data/docs/context/last_exchanges.json",'r') as f:
+        context_exchanges = json.load(f)
+except:
+    context_exchanges = []
+
 while True:
-    if not method_selected:
-        input_meathod = ask_user(
-            "How Would yu Like To Chat 1 For Written Query 0 For Speaking Your Query Wake Word Is Alexa")
-        method_selected = True
+    if not input_method:
+        method_selected = ask_user("How Would yu Like To Chat: Press 1 For Written Query 0 For Speaking Your Query Wake Word Is Alexa")
 
-        if input_meathod == "1":
-            speech = False
-        elif input_meathod == "0":
-            speech = True
-        else:
-            continue
+        if method_selected == "1":
+            input_method = "written"
+        elif method_selected == "0":
+            input_method = "speach"
 
-    user_input = ""
-    if speech:
-        user_input = get_query()
+        continue
 
-        if not user_input:
-            continue
-    else:
-        user_input = ask_user("You")
+    query = ""
+    if input_method == "written":
+        query = ask_user("Enter Your Query")
+    elif input_method == "speach":
+        query = get_query()
 
-    relevant_exchanges = ""
-    facts = []
-    temp_hist = []
-    info = ""
-
-    if user_input:
-        if user_input == "q":
-            if exchanges:
-                make_hist()
+    if query == "n":
+        loaded_docs = load_docs()
+    elif query == "r":
+        loaded_docs = unload_docs(loaded_docs)
+    elif query == "q":
+        if context_exchanges:
+            with open("../Data/docs/context/last_exchanges.json", 'w') as f:
+                json.dump(context_exchanges, f, indent=4)
             break
-        elif user_input == "n":
-            loaded_docs = load_docs()
-            if not loaded_docs:
-                console.print("[dim]Canceled Doc Referencing Process[/dim]")
-            continue
-        elif user_input == "r" and loaded_docs:
-            loaded_docs = unload_docs(loaded_docs)
-            continue
 
-        exchanges.append({"role": "user", "content": user_input})
-        to_give = exchanges[0:min(number_of_prev_msg_to_use_for_router, len(exchanges))]
+    k = min(number_of_prev_msg_to_use, len(context_exchanges) / 2)
 
-        to_give_text = "\n".join([f"User: {to_give[i]}\n Assistant: {to_give[i+1]}" for i in range(len(to_give)-2)])
-        to_give_text += f"\nUser: {to_give[-1]}"
+    previous_exchanges = []
+    previous_exchanges_text_query = ""
 
-        searched_info ,topics ,needs_rag ,search_clarification,modified_query = route_msg(to_give_text)
-        if modified_query:
-            to_give[-1] = {"role":"user","content":modified_query}
+    for i in range(0, len(context_exchanges), 2):
+        previous_exchanges.append(
+            {"user": context_exchanges[i]["content"], "assistant": context_exchanges[i + 1]["content"]})
+        previous_exchanges_text_query += f"{context_exchanges[i]['content']}\n{context_exchanges[i + 1]['content']}\n"
 
-        to_give_text = "\n".join([f"{to_give[i]}\n{to_give[i+1]}" for i in range(len(to_give)-2)])
-        to_give_text += f"\n{to_give[-1]}"
+        if len(previous_exchanges) > number_of_prev_msg_to_use:
+            break
 
-        if searched_info:
-            search_query = f"""The following information was retrieved from recent web searches. Use it as your primary source of truth when relevant. This information may be more up-to-date than your internal knowledge.
-            {searched_info} """ if searched_info else ""
+    modified_query, rag_needed, search_needed, search_clarification, topics, searched = route_msg(previous_exchanges,query,previous_exchanges_text_query)
 
-            info = search_query
+    if modified_query:
+        previous_exchanges_text_query += modified_query
+        previous_exchanges.append({"user": modified_query})
+    else:
+        previous_exchanges_text_query += query
+        previous_exchanges.append({"user": query})
 
-        if loaded_docs:
-            relevant_info_doc = compare_msg_doc(to_give_text, loaded_docs)
-            console.print(f"[dim]DEBUG {relevant_info_doc}[/dim]")
+    additional_info = ""
 
-            info += f"\n\nThis Info Is Retrieved From Document Given By User Use Info From Doc As Needed Also Yu Can Mention As Per Document Yu Provided: {relevant_info_doc}"
+    if rag_needed:
+        rag_output, facts = get_matches_rag(previous_exchanges_text_query, 15, topics)
+        rag_prompt = f"""This Is History From Previous User Chats With You. Use This Info Only When Needed.
 
-        if needs_rag:
-            relevant_exchanges, facts = get_matches_rag(to_give_text, 4, topics)
+                    Retrieved Memory:
+                    {rag_output}
 
-            console.print(f"[dim]DEBUG {relevant_exchanges} \nFacts: {facts}[/dim]")
+                    Instructions:
+                    - Use this memory ONLY when directly relevant to the current message
+                    - Prioritize recent conversation over old memory
+                    - If user asks about something mentioned in memory, reference it naturally
+                    - Do NOT force memory into every response
+                    - Treat memory as Old Memories, not a script to follow
 
-            rag_prompt = f"""This Is History From Previous User Chats With You. Use This Info Only When Needed.
+                    These Are User Facts 
+                    {", ".join(facts)}
+                    Only use them when you think its needed dont unnecessarily say you like this you had this appointment , Only Use It When Yu Feel Its Needed
+                    """
 
-            Retrieved Memory:
-            {relevant_exchanges}
+        additional_info += rag_prompt + "\n"
 
-            Instructions:
-            - Use this memory ONLY when directly relevant to the current message
-            - Prioritize recent conversation over old memory
-            - If user asks about something mentioned in memory, reference it naturally
-            - Do NOT force memory into every response
-            - Treat memory as Old Memories, not a script to follow
+    if searched:
+        for search_info in searched:
+            additional_info += f"Query: {search_info['query']} \n{search_info['content']}\n"
 
-            These Are User Facts 
-            {", ".join(facts)}
-            Only use them when you think its needed dont unnecessarily say you like this you had this appointment , Only Use It When Yu Feel Its Needed
-            """
+    if loaded_docs:
+        doc_retrieved = compare_msg_doc(previous_exchanges_text_query, loaded_docs)
+        additional_info += f"\nThis Info Is Retrieved From Docs Added By User And Is Relevant To User's Query So If Ans From This Info:\nInfo--> {doc_retrieved}"
 
-            info += f"\n\n{rag_prompt}" if relevant_exchanges else ""
+    prompt = [{"role": "system", "content": sys_prompt}, {"role": "system", "content": additional_info}]
+    prompt.extend(context_exchanges)
+    prompt.append({"role": "user", "content": modified_query if modified_query else query})
 
-        temp_hist.append(sys)
-        now = datetime.now()
-        temp_hist.append({"role": "system",
-                          "content": f"{info} ;  Date Today: {now.strftime('%A, %d %B %Y')} ; Current time: {now.strftime('%H:%M')}"})
-        temp_hist.extend(exchanges)
+    with console.status("[dim]Yuzu is typing...[/dim]", spinner="dots"):
+        response = loader.groq_client.chat.completions.create(model="openai/gpt-oss-120b", messages=prompt, stream=True)
+        reply = ""
 
-        with console.status("[dim]Yuzu is typing...[/dim]", spinner="dots"):
-            response = loader.groq_client.chat.completions.create(model="openai/gpt-oss-120b", messages=temp_hist,
-                                                                  stream=True)
-            reply = ""
-            for chunk in response:
-                token = chunk.choices[0].delta.content
-                if token:
-                    reply += token
+        for chunk in response:
+            token = chunk.choices[0].delta.content
+            if token:
+                reply += token
 
-            if search_clarification:
-                reply += f"\n{search_clarification}"
+        if search_clarification:
+            reply += f"\n{search_clarification}"
 
-        console.print(Panel(reply, title="[bold green]Yuzu[/bold green]", border_style="green"))
-        exchanges.append({"role": "assistant", "content": reply})
-        # make_sound(reply)
+    console.print(Panel(reply, title="[bold green]Yuzu[/bold green]", border_style="green"))
 
-        if len(exchanges) / 2 == n:
-            make_hist()
+    context_exchanges.append({"role": "user", "content": modified_query if modified_query else query})
+    context_exchanges.append({"role": "assistant", "content": reply})
+
+    if len(context_exchanges) / 2 > 50:
+        context_exchanges = make_hist(context_exchanges)

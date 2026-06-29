@@ -258,7 +258,6 @@ def select_docs():
     selected_docs = []
 
     while True:
-        # load docs
         docs = load_json()
         showed = False
         to_ask = "Enter The Number Mentioned Beside Docs OF the doc you wanna attach: (or press n to add new doc) or press q to quit doc process: "
@@ -277,11 +276,10 @@ def select_docs():
         else:
             console.print("[dim]No documents found[/dim]")
 
-        if not showed:
-            console.print("[dim]No documents found[/dim]")
+        if not showed and docs:
+            console.print("[dim]No Stored Documents Are Availabe To Add[/dim]")
             to_ask = "Press n to add new doc: Press q to quit: "
 
-        # ask user
         user_choice = ask_user(to_ask)
 
         if user_choice == "n":
@@ -323,10 +321,7 @@ def load_docs():
     if not selected_docs:
         return []
 
-    loaded_docs = []
-
-    for doc in selected_docs:
-        loaded_docs.append(doc)
+    loaded_docs = selected_docs.copy()
 
     return loaded_docs
 
@@ -338,17 +333,17 @@ def unload_docs(loaded_docs):
         for i,doc in enumerate(loaded_docs):
             console.print(f"[dim]{i + 1}: {doc['file_name']}[/dim]")
 
-        u_i = ask_user("Enter The Number of file You wanna remove or press q to quit: ")
+        user_input = ask_user("Enter The Number of file You wanna remove or press q to quit: ")
 
-        if u_i == "q":
+        if user_input == "q":
             return loaded_docs
 
-        if u_i and u_i.isdigit():
-            if int(u_i) > len(loaded_docs) or int(u_i) <= 0:
+        if user_input and user_input.isdigit():
+            if int(user_input) > len(loaded_docs) or int(user_input) <= 0:
                 console.print("[dim]Invalid Input[/dim]")
                 continue
 
-            loaded_docs.pop(int(u_i) - 1)
+            loaded_docs.pop(int(user_input) - 1)
 
 def compare_msg_doc(msg, loaded_docs):
     key_words = loader.extract_keywords(msg)
@@ -356,12 +351,11 @@ def compare_msg_doc(msg, loaded_docs):
 
     similar_chunks = []
 
-    for i,doc in enumerate(loaded_docs):
+    for doc in loaded_docs:
         ids = compare_embed(query_embed=embedded_msg,name=doc["file_name"],depth=5)
         chunks = doc["doc_data"]
-        print(len(chunks))
-        for k,chunk in enumerate(chunks):
-            if k in ids:
-                similar_chunks.append(chunk)
+        similar_chunks.append(f"File Name: {doc['file_name']} \nData Retrieved-->")
+        temp = [chunks[k] for k in ids]
+        similar_chunks.extend(temp)
 
     return "\n".join(similar_chunks)

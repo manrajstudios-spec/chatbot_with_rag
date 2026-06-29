@@ -1,4 +1,5 @@
 import pickle
+import math
 import numpy as np
 from loader import console
 
@@ -63,7 +64,7 @@ def add_to_graph(all_embeds,query_embed,graph,center):
     all_embeds_norm = all_embeds / np.clip(norms, 1e-8, None)
     query_norm = query_embed/np.linalg.norm(query_embed)
 
-    threshold = -np.inf
+    threshold = -math.inf
 
     visited = set()
     similar = set()
@@ -71,7 +72,7 @@ def add_to_graph(all_embeds,query_embed,graph,center):
 
     stack.append(center)
 
-    off_set_allowed = 0.15
+    offset = 0.15
 
     while stack:
         cur_id = stack.pop()
@@ -81,14 +82,15 @@ def add_to_graph(all_embeds,query_embed,graph,center):
 
         visited.add(cur_id)
 
-        sim = all_embeds_norm[cur_id] @ query_norm
+        sim = float(all_embeds_norm[cur_id] @ query_norm)
 
-        if sim > threshold:
+        diff = math.fabs(sim - threshold)
+
+        if diff <= offset and diff > 0:
+            similar.add(cur_id)
+        elif diff >= offset:
             threshold = sim
             similar.clear()
-            similar.add(int(cur_id))
-
-        elif sim >= threshold - off_set_allowed:
             similar.add(int(cur_id))
 
         stack.extend(graph[cur_id])
@@ -98,12 +100,12 @@ def add_to_graph(all_embeds,query_embed,graph,center):
     for s in similar:
         graph[s].append(len(graph)-1)
 
-    all = np.vstack([all_embeds_norm,query_norm])
-    mean = np.mean(all, axis=0)
+    all_norm = np.vstack([all_embeds_norm,query_norm])
+    mean = np.mean(all_norm, axis=0)
     mean_norm = np.linalg.norm(mean)
     mean = mean/mean_norm
 
-    center = int(np.argmax(all @ mean))
+    center = int(np.argmax(all_norm @ mean))
 
     return graph,center,np.vstack([all_embeds_norm,query_norm])
 
@@ -146,7 +148,7 @@ def check_graph(all_embeds, query_embed, graph, max_search=5,max_depth=10,center
     depth = 0
     stack.append((center_node,depth))
 
-    threshold = -np.inf
+    threshold = -math.inf
     offset = 0.2
 
     while stack and number_of_max_searches < max_search:
@@ -159,16 +161,17 @@ def check_graph(all_embeds, query_embed, graph, max_search=5,max_depth=10,center
 
         visited.add(cur_id)
 
-        sim = all_embeds[cur_id] @ query_norm
+        sim = float(all_embeds[cur_id] @ query_norm)
 
         console.print(f"[dim]sim centre: {sim}[/dim]")
 
-        if sim > threshold:
+        diff = math.fabs(sim-threshold)
+
+        if diff <= offset and diff > 0:
+            similar.add(cur_id)
+        elif diff >= offset:
             threshold = sim
             similar.clear()
-            similar.add(int(cur_id))
-
-        elif sim >= threshold - offset:
             similar.add(int(cur_id))
 
         for n in graph[cur_id]:

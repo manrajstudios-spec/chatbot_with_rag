@@ -10,7 +10,8 @@ from urllib.parse import quote
 from doc_reader import make_chunks
 from rapidfuzz import process, fuzz
 from graph_search import make_graph,check_graph
-from loader import console,get_embedding,get_response
+from loader import console,get_embedding,groq_client,main_model
+
 all_apps = set()
 
 for directory in os.environ["PATH"].split(":"):
@@ -18,140 +19,146 @@ for directory in os.environ["PATH"].split(":"):
         for file in os.listdir(directory):
             all_apps.add(file)
 
-sys_prompt = """Act like a senior NLP architect, query understanding expert, retrieval engineer, and information extraction specialist. Your task is to analyze the user's latest message within the context of the conversation history and return ONLY a valid JSON object. Do not explain anything. Do not use markdown. Do not output comments. Do not output text before or after the JSON.
+sys_prompt = """You are a query router and conversation understanding model.
 
-Return exactly this schema:  
-{  
-"modified_query":"string"
-"topics": ["string"],  
-"search_queries": ["string"],  
-"open_items": ["string"],  
-"search_clarification": "string" or null,  
-"needs_search": boolean,  
-"needs_rag": boolean  
+Analyze the latest user message using recent conversation history.
+
+Return ONLY valid JSON.
+No markdown.
+No explanations.
+No text before or after JSON.
+
+OUTPUT SCHEMA:
+{
+"modified_query": string or null,
+"topics": string[],
+"search_queries": string[],
+"open_items": string[],
+"search_clarification": string or null,
+"needs_search": boolean,
+"needs_rag": boolean
 }
 
-### ========================================================================  
-SECTION 1: FIELD DEFINITIONS & RULES
+GENERAL RULES:
 
-FIELD 0 : modified_query
-Analyze the user message and populate "modified_query" as follows:
-- If the message is a greeting, filler, or casual small talk with no retrievable intent → null
-- If the message is clear and specific → rephrase it as a clean, neutral, third-person semantic statement capturing the core meaning (e.g. "user asks about X")
-- If the message is vague, uses pronouns, or references something without naming it ("that thing", "what we talked about", "it") → resolve the reference using conversation history and output the resolved meaning
-- If the message carries emotional context relevant to memory ("i'm tired", "that made me happy") → include the emotional context in the semantic query
-- Output should be a single concise sentence, no filler words, optimized for embedding and vector search
+* Always output exactly the fields above.
+* Do not add extra fields.
+* Use valid JSON only.
+* search_queries must contain maximum 2 items.
+* If no value exists, use null or [].
+* Analyze the latest user message as the main request.
+* Use previous exchanges only for context, pronoun resolution, and continuity.
 
-FIELD 1: topics
+FIELD: modified_query
 
-*   Purpose: Generate BROAD semantic categories for retrieval, memory lookup, semantic search, clustering, and routing.
-*   Context Drift & Continuity Rules (Last 2-3 Exchanges):
-    *   Do NOT evaluate the latest message in isolation. Read the last 2-3 turns to track context.
-    *   If the latest message uses pronouns ("it", "they", "that code") or is an implicit continuation of the previous topic, the `topics` array MUST inherit and retain the active topics from those recent exchanges.
-    *   If the user abruptly switches topics, include the new topic as primary, but retain the previous topic if the shift is a sub-task or related pivot.
-*   General Rules:
-    *   Topics are NOT keywords. They represent the general subject area/domain of the request.
-    *   Prefer broad domains over specific terms (e.g., "networking" not "tcp packets").
-    *   Prefer categories over keywords (e.g., "machine learning" not "transformer layers").
-    *   Use 1-5 topics when possible. Maximum 8.
-    *   Remove duplicates. Order by importance.
-    *   Use lowercase unless it is a proper noun.
-    *   If the entire recent window and latest message contain ONLY a greeting with no question/task, use ["greeting"].
+* If the latest message is greeting, filler, thanks, or small talk with no task, return null.
+* If clear, rewrite it as one concise semantic sentence.
+* If vague or uses pronouns like "it", "that", "this", resolve using recent history.
+* If user asks only to open an app/site, return null.
+* If user asks to open something plus another task, remove the open action and keep the task.
+* Keep it optimized for embedding/search.
+* Prefer: "user asks..." or "user wants..."
 
-Topic selection guidance:
+FIELD: topics
+ * Purpose: Generate BROAD semantic categories for retrieval, memory lookup, semantic search, clustering, and routing. 
+ * Context Drift & Continuity Rules (Last 2-3 Exchanges): 
+ * Do NOT evaluate the latest message in isolation. Read the last 2-3 turns to track context. 
+ * If the latest message uses pronouns ("it", "they", "that code") or is an implicit continuation of the previous topic, the topics array MUST inherit and retain the active topics from those recent exchanges. 
+ * If the user abruptly switches topics, include the new topic as primary, but retain the previous topic if the shift is a sub-task or related pivot. 
+ * General Rules: 
+ * Topics are NOT keywords. They represent the general subject area/domain of the request. 
+ * Prefer broad domains over specific terms (e.g., "networking" not "tcp packets"). 
+ * Prefer categories over keywords (e.g., "machine learning" not "transformer layers"). 
+ * Use 1-5 topics when possible. Maximum 8. * Remove duplicates. Order by importance. 
+ * Use lowercase unless it is a proper noun. 
+ * If the entire recent window and latest message contain ONLY a greeting with no question/task, use ["greeting"]. 
+ 
+ Topic selection guidance: 
+ * Technology: networking, operating systems, programming, web development, databases, devops, cybersecurity, mobile development, version control, artificial intelligence, machine learning, deep learning, computer vision, natural language processing, reinforcement learning, data science * Finance: finance, stock market, cryptocurrency, personal finance, economics * Science: mathematics, physics, chemistry, biology * Creative: design, graphic design, video & animation, music * Entertainment: anime, gaming, movies & tv, sports * Career: career, education, productivity * Lifestyle: health, travel, food * General: general knowledge, current events, social, greeting
 
-*   Technology: networking, operating systems, programming, web development, databases, devops, cybersecurity, mobile development, version control, artificial intelligence, machine learning, deep learning, computer vision, natural language processing, reinforcement learning, data science
-*   Finance: finance, stock market, cryptocurrency, personal finance, economics
-*   Science: mathematics, physics, chemistry, biology
-*   Creative: design, graphic design, video & animation, music
-*   Entertainment: anime, gaming, movies & tv, sports
-*   Career: career, education, productivity
-*   Lifestyle: health, travel, food
-*   General: general knowledge, current events, social, greeting
+FIELD: search_queries
+Generate search queries ONLY when external web search is actually needed.
 
-FIELD 2: search_queries & search_clarification
+Search is needed for:
 
-*   Purpose: Generate search-engine queries when external information is needed AND the model can confidently infer what to search for.
-*   Generate queries for:
-    *   current events, news, weather, prices, exchange rates, stocks, crypto prices
-    *   product availability, APIs, official documentation, software releases
-    *   recent developments, factual web lookups, time-sensitive information
-    *   The Last User: Row In Prompt Is Users Latest Message So Generate Search Query if user asks in Input Which is Last User: And Use Previous Exchanges To Identify What needs To Be Searched
-*   Do NOT generate queries when:
-    *   the task can be answered from general knowledge
-    *   the task is writing, brainstorming, summarization
-    *   the task is coding without requiring documentation lookup
-*   When search is needed but queries cannot be confidently generated:
-    *   Set "needs_search": true
-    *   Set "search_queries": []
-    *   Set "search_clarification": "Would you like to search for this? If yes, please tell me what specifically to search for." (Or customize based on context).
-    *   Maximum 1 explicit target per search.
-*   When search is NOT needed:
-    *   Set "needs_search": false
-    *   Set "search_queries": []
-    *   Set "search_clarification": null
-*   When search IS needed and queries CAN be generated:
-    *   Set "needs_search": true
-    *   Populate "search_queries" with 1-3 short, optimized queries
-    *   Set "search_clarification": null
+* latest/current/recent/live information
+* news, weather, prices, stocks, crypto, exchange rates,media or any topic 
+* product availability
+* schedules, deadlines, laws, regulations
+* APIs, libraries, docs, software/model releases
+* specific companies, people, products, services, GitHub issues, fellowships, competitions, jobs
+* when user explicitly says search, browse, look up, check online, or verify
 
-FIELD 3: open_items
+Search is NOT needed for:
 
-*   Populate ONLY when the user explicitly requests to open, launch, start, run, visit, or go to an application.
-*   Normalize application names: chrome -> Chrome, vscode -> Visual Studio Code, youtube -> YouTube, spotify -> Spotify, discord -> Discord, firefox -> Firefox, edge -> Microsoft Edge
-*   If none: return an empty array [].
+* general knowledge
+* explanations
+* writing/rewriting
+* brainstorming
+* coding/debugging with enough provided context
+* casual chat
+* tasks answerable from recent conversation or RAG
 
-FIELD 4: needs_search
+Rules:
 
-*   Purpose: Explicit boolean flag to indicate if external web search execution is required.
-*   Rules: Set to true if search_queries contains items, or if search_clarification is triggered due to missing parameters for a necessary web search. Otherwise, set to false.
+* search_queries must be [] when search is not needed.
+* Generate 1 or 2 queries only.
+* Never generate more than 2 queries.
+* Prefer 1 strong query.
+* Queries should be short and specific.
+* Do not duplicate queries.
 
-FIELD 5: needs_rag
+FIELD: search_clarification
 
-*   Purpose: Explicit boolean flag to determine if the system should query internal vector databases, document pools, or knowledge bases.
-*   Multi-Turn Context Rules:
-    *   Analyze the latest user message combined with the past 2-3 exchanges.
-    *   Set to true if the ongoing conversation thread requires reference data, internal documentation, or technical historical context, even if the latest user turn is short or uses continuation shorthand (e.g., "can you optimize it?", "explain the second step").
-    *   Set to false if the conversation window contains only casual small talk, greetings, simple acknowledgments (e.g., "ok", "thanks"), or basic conversational feedback without an active informational task.
+* If search is not needed: null.
+* If search is needed and queries are clear: null.
+* If user wants search but target is unclear: "Please specify what you want me to search for."
 
-### ========================================================================  
-SECTION 2: CONVERSATIONAL CONTINUITY RULE
+FIELD: open_items
 
-Before extracting fields, evaluate if this message is a casual REPLY to a social exchange.
+* Populate only when user explicitly asks to open, launch, start, run, visit, or go to something.
+* Normalize names:
+  chrome -> Chrome
+  vscode / vs code -> Visual Studio Code
+  youtube -> YouTube
+  spotify -> Spotify
+  discord -> Discord
+  firefox -> Firefox
+  edge -> Microsoft Edge
+  github -> GitHub
+  gmail -> Gmail
+  pycharm -> PyCharm
+* If none, return [].
 
-*   If the previous AI turn was a greeting or small talk AND the current user message is a short casual response with no new task:
-    * modified_quer: ""
-    *   topics: ["greeting"]
-    *   search_queries: []
-    *   open_items: []
-    *   search_clarification: null
-    *   needs_search: false
-    *   needs_rag: false
-*   If the user's reply is conversational BUT also contains a clear question or task, isolate and process ONLY the task using the multi-turn rules from Section 1.
+FIELD: needs_search
 
-### ========================================================================  
-SECTION 3: OUTPUT JSON FORMAT
+* true if search_queries is not empty.
+* true if search_clarification is not null.
+* otherwise false.
 
-*   Always return valid JSON.
-*   Never omit fields. Never add fields.
-*   Never explain. Never use markdown formatting blocks in the output.
-*   The final output must be perfectly parseable by a strict JSON parser.
+FIELD: needs_rag
+Set true when internal memory/RAG/documents would help:
 
-Strict JSON Schema Definition:  
-{  
-  "type": "object",  
-  "properties": {  
-    "modified_query": { "type": ["string", "null"] },
-    "topics": { "type": "array", "items": { "type": "string" } },  
-    "search_queries": { "type": "array", "items": { "type": "string" } },  
-    "open_items": { "type": "array", "items": { "type": "string" } },  
-    "search_clarification": { "type": ["string", "null"] },  
-    "needs_search": { "type": "boolean" },  
-    "needs_rag": { "type": "boolean" }  
-  },  
-  "required": ["modified_query", "semantic_query", "topics", "search_queries", "open_items", "search_clarification", "needs_search", "needs_rag"],  
-  "additionalProperties": false  
-}"""
+* user refers to previous conversation, saved memory, uploaded docs, old code, projects, repo, preferences, plans, or personal history
+* user says things like "my project", "that code", "continue from there", "what we discussed"
+* latest message needs historical/personal context beyond recent turns
+
+Set false when:
+
+* greeting/small talk/thanks
+* simple general knowledge
+* web search only
+* open app/site only
+* current message has enough context
+
+FINAL CHECK:
+Before output, ensure:
+
+* valid JSON
+* exactly 7 fields
+* search_queries has max 2 items
+* needs_search is true only when search_queries has items or search_clarification is not null
+"""
 route_model = "openai/gpt-oss-120b"
 embedding_model = "text-embedding-embeddinggemma-300m"
 
@@ -160,22 +167,40 @@ def find_app(query, app_names, threshold=90):
 
     return match[0] if match else ""
 
-def route_msg(p_exchanges_text):
-    raw = get_response(p_exchanges_text,sys_prompt)
+def get_response(previous_exchanges,query):
+    to_give = [{"role": "system", "content": sys_prompt}]
 
-    search_queries = raw["search_queries"]
-    open_items = raw["open_items"]
-    topics = raw["topics"]
-    search_clarification = raw["search_clarification"]
-    search_needed = raw["needs_search"]
-    rag_needed = raw["needs_rag"]
-    modified_query = raw["modified_query"]
+    for exchange in previous_exchanges:
+        to_give.append({"role":"user","content":exchange["user"]})
+        to_give.append({"role": "assistant", "content": exchange["assistant"]})
+
+    to_give.append({"role":"user","content":query})
+
+    response = groq_client.chat.completions.create(model=main_model,messages=to_give)
+
+    return json.loads(response.choices[0].message.content.strip())
+
+def route_msg(previous_exchanges, user_query,previous_exchanges_text):
+    parsed = get_response(previous_exchanges, user_query)
+
+    search_clarification = parsed["search_clarification"]
+    modified_query = parsed["modified_query"]
+    search_queries = parsed["search_queries"]
+    search_needed = parsed["needs_search"]
+    open_items = parsed["open_items"]
+    rag_needed = parsed["needs_rag"]
+    topics = parsed["topics"]
 
     searched = []
 
-    if search_queries:
-        searched = web_search(search_queries, p_exchanges_text)
+    console.print(f"Queries{search_queries}")
 
+    if modified_query: previous_exchanges_text += modified_query
+    else: previous_exchanges_text += user_query
+
+    if search_queries:
+        searched = web_search(search_queries, previous_exchanges_text)
+        console.print(f"Searched{len(searched)}")
     if open_items:
         for item in open_items:
             app_name = find_app(item,all_apps)
@@ -186,12 +211,9 @@ def route_msg(p_exchanges_text):
                 webbrowser.open(f"https://www.google.com/search?q={quote(item)}")
                 print(f"APP ERROR: {e}")
 
-    return searched[:4000],topics,rag_needed,search_clarification if search_needed else "",modified_query if modified_query else ""
+    return modified_query,rag_needed,search_needed,search_clarification,topics,searched
 
 def web_search(queries, to_ask):
-    with open("../Data/Config/config_json.json", "r") as f:
-        threshold = json.load(f)["web_search"]
-
     all_info = []
     query_embed = np.array(get_embedding([to_ask])[0],dtype=np.float32)
     query_embed = np.array(query_embed, dtype=np.float32)
@@ -210,24 +232,21 @@ def web_search(queries, to_ask):
                         continue
 
                     content = trafilatura.extract(html) or hit["body"]
-                    if len(content) > 5000:
-                        content = content[:4000]
-                    if not content:
-                        continue
+
+                    if len(content) > 5000:content = content[:5000]
+
+                    if not content:continue
 
                     chunks = make_chunks(content)
 
-                    if not chunks:
-                        continue
-
-                    embeddings = []
+                    chunk_embeddings = []
 
                     for chunk in chunks:
-                        embeddings.append(np.array(get_embedding([chunk.strip()])[0],dtype=np.float32))
+                        chunk_embeddings.append(np.array(get_embedding([chunk.strip()])[0],dtype=np.float32))
 
-                    embeddings = np.array(embeddings, dtype=np.float32)
+                    chunk_embeddings = np.array(chunk_embeddings, dtype=np.float32)
 
-                    graph, start,all_embeds_norm = make_graph(embeddings, "abc", False)
+                    graph, start,all_embeds_norm = make_graph(chunk_embeddings, "abc", False)
 
                     ids = check_graph(query_embed=query_embed, all_embeds=all_embeds_norm, graph=graph,center_node=start)
 

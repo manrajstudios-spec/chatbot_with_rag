@@ -71,16 +71,23 @@ topics:
     *   Use lowercase unless it is a proper noun.
     *   If the entire recent window and latest message contain ONLY a greeting with no question/task, use ["greeting"].
 
-Topic selection guidance:
-
-*   Technology: networking, operating systems, programming, web development, databases, devops, cybersecurity, mobile development, version control, artificial intelligence, machine learning, deep learning, computer vision, natural language processing, reinforcement learning, data science
-*   Finance: finance, stock market, cryptocurrency, personal finance, economics
-*   Science: mathematics, physics, chemistry, biology
-*   Creative: design, graphic design, video & animation, music
-*   Entertainment: anime, gaming, movies & tv, sports
-*   Career: career, education, productivity
-*   Lifestyle: health, travel, food
-*   General: general knowledge, current events, social, greeting
+FIELD 1:
+ topics 
+ * Purpose: Generate BROAD semantic categories for retrieval, memory lookup, semantic search, clustering, and routing. 
+ * Context Drift & Continuity Rules (Last 2-3 Exchanges): 
+ * Do NOT evaluate the latest message in isolation. Read the last 2-3 turns to track context. 
+ * If the latest message uses pronouns ("it", "they", "that code") or is an implicit continuation of the previous topic, the topics array MUST inherit and retain the active topics from those recent exchanges. 
+ * If the user abruptly switches topics, include the new topic as primary, but retain the previous topic if the shift is a sub-task or related pivot. 
+ * General Rules: 
+ * Topics are NOT keywords. They represent the general subject area/domain of the request. 
+ * Prefer broad domains over specific terms (e.g., "networking" not "tcp packets"). 
+ * Prefer categories over keywords (e.g., "machine learning" not "transformer layers"). 
+ * Use 1-5 topics when possible. Maximum 8. * Remove duplicates. Order by importance. 
+ * Use lowercase unless it is a proper noun. 
+ * If the entire recent window and latest message contain ONLY a greeting with no question/task, use ["greeting"]. 
+ 
+ Topic selection guidance: 
+ * Technology: networking, operating systems, programming, web development, databases, devops, cybersecurity, mobile development, version control, artificial intelligence, machine learning, deep learning, computer vision, natural language processing, reinforcement learning, data science * Finance: finance, stock market, cryptocurrency, personal finance, economics * Science: mathematics, physics, chemistry, biology * Creative: design, graphic design, video & animation, music * Entertainment: anime, gaming, movies & tv, sports * Career: career, education, productivity * Lifestyle: health, travel, food * General: general knowledge, current events, social, greeting
 
 facts:
 - Compare new exchanges against old_facts.
@@ -324,21 +331,21 @@ def add_to_rag(hist):
         else:
             add_new_group(section_exchanges,section_embeddings_norm,section_topics,date)
 
-def get_matches_rag(user, k, topics):
-    embedding = get_embedding([user + f"Topics {topics}"])[0]
+def get_matches_rag(previous_exchanges_query_text, k, topics):
+    embedding = get_embedding([previous_exchanges_query_text + f"Topics {topics}"])[0]
     embedding = np.array(embedding,dtype=np.float32).flatten()
-    matches = compare_embedding_master_table(embedding, k)
+    matched_groups = compare_embedding_master_table(embedding, k)
     summaries=set()
 
-    for group_name in matches:
+    for group_name in matched_groups:
         cur_summaries:list[str] = compare_embed_group(group_name, embedding)
 
         for x in cur_summaries:
             summaries.add(x)
 
-    summary = " ".join(summaries)
+    rag_output = "\n".join(summaries)
 
-    return summary,load_facts()
+    return rag_output,load_facts()
 
 if __name__ == "__main__":
     console.print(get_matches_rag("Watched Thar Tensura ep", 10,[""]))

@@ -81,12 +81,13 @@ Generate search queries ONLY when external web search is actually needed.
 Search is needed for:
 
 * latest/current/recent/live information
-* news, weather, prices, stocks, crypto, exchange rates,media or any topic 
+* news, weather, prices, stocks, crypto, exchange rates,media or any topic , fun topic anime ,games,like anything latest 
 * product availability
 * schedules, deadlines, laws, regulations
 * APIs, libraries, docs, software/model releases
 * specific companies, people, products, services, GitHub issues, fellowships, competitions, jobs
 * when user explicitly says search, browse, look up, check online, or verify
+* anything like games new video out any anime or fun thin
 
 Search is NOT needed for:
 
@@ -96,7 +97,7 @@ Search is NOT needed for:
 * brainstorming
 * coding/debugging with enough provided context
 * casual chat
-* tasks answerable from recent conversation or RAG
+* tasks answerable from recent conversation 
 
 Rules:
 
@@ -167,17 +168,19 @@ def find_app(query, app_names, threshold=90):
     return match[0] if match else ""
 
 def get_response(previous_exchanges,query):
-    to_give = [{"role": "system", "content": sys_prompt}]
+    with console.status("[dim]Router Is Routing...[/dim]", spinner="dots"):
 
-    for exchange in previous_exchanges:
-        to_give.append({"role":"user","content":exchange["user"]})
-        to_give.append({"role": "assistant", "content": exchange["assistant"]})
+        to_give = [{"role": "system", "content": sys_prompt}]
 
-    to_give.append({"role":"user","content":query})
+        for exchange in previous_exchanges:
+            to_give.append({"role":"user","content":exchange["user"]})
+            to_give.append({"role": "assistant", "content": exchange["assistant"]})
 
-    response = groq_client.chat.completions.create(model=main_model,messages=to_give)
+        to_give.append({"role":"user","content":query})
 
-    return json.loads(response.choices[0].message.content.strip())
+        response = groq_client.chat.completions.create(model=main_model,messages=to_give)
+
+        return json.loads(response.choices[0].message.content.strip())
 
 def route_msg(previous_exchanges, user_query,previous_exchanges_text):
     parsed = get_response(previous_exchanges, user_query)
@@ -192,7 +195,12 @@ def route_msg(previous_exchanges, user_query,previous_exchanges_text):
 
     searched = []
 
-    console.print(f"Queries{search_queries}")
+    if search_queries:
+        console.print(f"Queries: {search_queries}")
+    if rag_needed:
+        console.print(f"Rag needed: {rag_needed}")
+    if modified_query:
+        console.print(f"Modified query: {modified_query}")
 
     if modified_query: previous_exchanges_text += modified_query
     else: previous_exchanges_text += user_query

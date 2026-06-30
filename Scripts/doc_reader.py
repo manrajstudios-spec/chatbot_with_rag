@@ -2,14 +2,10 @@ import re
 import json
 import fitz
 import loader
-import pdfplumber
 import numpy as np
 from loader import console,get_embedding,get_response
 from tkinter import Tk,filedialog
 from graph_search import compare_embed,make_graph
-
-root = Tk()
-root.withdraw()
 
 summary_model = "nvidia/nemotron-3-nano-4b"
 embeddings_model = "text-embedding-embeddinggemma-300m"
@@ -109,21 +105,23 @@ def clean_text(text):
     return text.strip()
 
 def read_doc(path):
-    doc = fitz.open(path)
+    try:
+        doc = fitz.open(path)
 
-    text = ""
+        text = ""
 
-    for page in doc:
-        text += page.get_text()
+        for page in doc:
+            text += page.get_text()
 
-    return clean_text(text)
+        return clean_text(text)
+    except FileNotFoundError:
+        return ""
 
 def make_batch(chunks):
     len_batch = 3
-
     batches = []
-
     index = 0
+
     for i in range(len(chunks)):
         if i == index:
             index += len_batch
@@ -147,6 +145,9 @@ def make_summaries(batches):
     return s
 
 def insert_doc():
+    root = Tk()
+    root.withdraw()
+
     filepath = filedialog.askopenfilename()
 
     if not filepath:
@@ -162,8 +163,8 @@ def insert_doc():
         add_doc(filepath,with_summary)
 
 def make_chunks(t):
-    max_limit = 2000
-    min_limit = 1700
+    max_limit = 1500
+    min_limit = 1200
     overlap = 2
 
     sentences = loader.make_sentences(t)
@@ -221,9 +222,14 @@ def add_doc(doc_path,with_summary=False):
     elif doc_path.endswith(".txt"):
         with open(doc_path,"r") as f:
             text = f.read()
+    else:
+        console.print("[red]Unsupported file type[/red]")
+        return
 
-    chunks = make_chunks(text)
-    batches = make_batch(chunks)
+    with console.status("[dim]Making Chunks And Batches.. [/dim]", spinner="dots"):
+        chunks = make_chunks(text)
+        batches = make_batch(chunks)
+
     key_words = []
     embeddings = []
     summaries = []
@@ -289,10 +295,10 @@ def select_docs():
         if user_choice == "q":
             return selected_docs
 
-        if user_choice and user_choice.isdigit() or (int(user_choice) not in options and user_choice.isdigit()):
+        if user_choice and user_choice.isdigit() and int(user_choice) in options:
             user_choice = int(user_choice)
 
-            if user_choice > len(docs) :
+            if user_choice > len(docs) or user_choice <= 0:
                 console.print("[dim]Invalid Input[/dim]")
                 continue
 
@@ -300,7 +306,7 @@ def select_docs():
 
             console.print("[dim]Doc Added[/dim]")
 
-            if len(selected_docs) < max_attachments:
+            if len(selected_docs) <= max_attachments:
                 want_another_doc = ask_user("Want To Add another document? (0 for NO or 1 for YES) ")
                 if want_another_doc == "0":
                     break
@@ -351,11 +357,12 @@ def compare_msg_doc(msg, loaded_docs):
 
     similar_chunks = []
 
-    for doc in loaded_docs:
-        ids = compare_embed(query_embed=embedded_msg,name=doc["file_name"],depth=5)
-        chunks = doc["doc_data"]
-        similar_chunks.append(f"File Name: {doc['file_name']} \nData Retrieved-->")
-        temp = [chunks[k] for k in ids]
-        similar_chunks.extend(temp)
+    with console.status("[dim]Comparing Query...[/dim]",spinner="dots"):
+        for doc in loaded_docs:
+            ids = compare_embed(query_embed=embedded_msg,name=doc["file_name"],depth=5)
+            chunks = doc["doc_data"]
+            similar_chunks.append(f"File Name: {doc['file_name']} \nData Retrieved-->")
+            temp = [chunks[k] for k in ids]
+            similar_chunks.extend(temp)
 
     return "\n".join(similar_chunks)

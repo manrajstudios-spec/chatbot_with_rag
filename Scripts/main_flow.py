@@ -1,7 +1,5 @@
 import json
-
 import loader
-from STT import get_query
 from loader import console
 from TTS import make_sound
 from router import route_msg
@@ -60,11 +58,10 @@ sys = {"role": "system", "content": sys_prompt}
 number_of_prev_msg_to_use = 5
 
 def ask_user(input_msg):
-    with console.status("[dim]User is typing...[/dim]", spinner="dots"):
-        while True:
-            u_i = Prompt.ask(f"[bold cyan]{input_msg}[/bold cyan]")
-            if u_i:
-                return u_i
+    while True:
+        u_i = Prompt.ask(f"[bold cyan]{input_msg}[/bold cyan]")
+        if u_i:
+            return u_i
 
 def retrieve_summary(user_query):
     return get_result(user_query)
@@ -80,7 +77,7 @@ input_method = ""
 try:
     with open("../Data/docs/context/last_exchanges.json",'r') as f:
         context_exchanges = json.load(f)
-except:
+except FileNotFoundError:
     context_exchanges = []
 
 while True:
@@ -98,12 +95,15 @@ while True:
     if input_method == "written":
         query = ask_user("Enter Your Query")
     elif input_method == "speach":
+        from STT import get_query
         query = get_query()
 
     if query == "n":
         loaded_docs = load_docs()
+        continue
     elif query == "r":
         loaded_docs = unload_docs(loaded_docs)
+        continue
     elif query == "q":
         if context_exchanges:
             with open("../Data/docs/context/last_exchanges.json", 'w') as f:
@@ -125,12 +125,8 @@ while True:
 
     modified_query, rag_needed, search_needed, search_clarification, topics, searched = route_msg(previous_exchanges,query,previous_exchanges_text_query)
 
-    if modified_query:
-        previous_exchanges_text_query += modified_query
-        previous_exchanges.append({"user": modified_query})
-    else:
-        previous_exchanges_text_query += query
-        previous_exchanges.append({"user": query})
+    previous_exchanges_text_query += query
+    previous_exchanges.append({"user": query})
 
     additional_info = ""
 
@@ -163,9 +159,12 @@ while True:
         doc_retrieved = compare_msg_doc(previous_exchanges_text_query, loaded_docs)
         additional_info += f"\nThis Info Is Retrieved From Docs Added By User And Is Relevant To User's Query So If Ans From This Info:\nInfo--> {doc_retrieved}"
 
-    prompt = [{"role": "system", "content": sys_prompt}, {"role": "system", "content": additional_info}]
+    now = datetime.now()
+    date = now.strftime('%A, %d %B %Y')
+
+    prompt = [{"role": "system", "content": sys_prompt}, {"role": "system", "content": f"{additional_info} \n\nDate Today:{date}"}]
     prompt.extend(context_exchanges)
-    prompt.append({"role": "user", "content": modified_query if modified_query else query})
+    prompt.append({"role": "user", "content": query})
 
     with console.status("[dim]Yuzu is typing...[/dim]", spinner="dots"):
         response = loader.groq_client.chat.completions.create(model="openai/gpt-oss-120b", messages=prompt, stream=True)

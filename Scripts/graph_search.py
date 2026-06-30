@@ -18,96 +18,98 @@ def save_data(data):
         pickle.dump(data, f)
 
 def make_graph(all_embeds,name,save=True):
-    all_embeds = np.array(all_embeds, dtype=np.float32)
-    norms = np.linalg.norm(all_embeds, axis=1, keepdims=True)
-    all_embeds_norm = all_embeds / np.clip(norms, 1e-8, None)
+    with console.status("[dim]Making Graph...[/dim]",spinner="dots"):
+        all_embeds = np.array(all_embeds, dtype=np.float32)
+        norms = np.linalg.norm(all_embeds, axis=1, keepdims=True)
+        all_embeds_norm = all_embeds / np.clip(norms, 1e-8, None)
 
-    if len(all_embeds_norm) == 1:
-        graph = [[]]
-        center_node = 0
+        if len(all_embeds_norm) == 1:
+            graph = [[]]
+            center_node = 0
+
+            if save:
+                data = load_data()
+                data.append({"name": name,"graph": graph,"center_node": center_node,"all_embeds": all_embeds_norm})
+                save_data(data)
+
+            return graph, center_node, all_embeds_norm
+
+        graph = []
+        k = min(8, len(all_embeds_norm) - 1)
+
+        for i,x in enumerate(all_embeds_norm):
+            sim = all_embeds_norm @ x
+            sim[i] = -np.inf
+            sim_ids = np.argpartition(sim, -k)[-k:]
+
+            graph.append(sim_ids.tolist())
+
+        mean = np.mean(all_embeds_norm, axis=0)
+        mean_norm = np.linalg.norm(mean)
+
+        if mean_norm > 1e-8:
+            mean /= mean_norm
+
+        center_node = int(np.argmax(all_embeds_norm @ mean))
 
         if save:
             data = load_data()
-            data.append({"name": name,"graph": graph,"center_node": center_node,"all_embeds": all_embeds_norm})
+            data.append({"name":name,"graph":graph,"center_node":center_node,"all_embeds":all_embeds_norm})
             save_data(data)
 
-        return graph, center_node, all_embeds_norm
-
-    graph = []
-    k = min(8, len(all_embeds_norm) - 1)
-
-    for i,x in enumerate(all_embeds_norm):
-        sim = all_embeds_norm @ x
-        sim[i] = -np.inf
-        sim_ids = np.argpartition(sim, -k)[-k:]
-
-        graph.append(sim_ids.tolist())
-
-    mean = np.mean(all_embeds_norm, axis=0)
-    mean_norm = np.linalg.norm(mean)
-
-    if mean_norm > 1e-8:
-        mean /= mean_norm
-
-    center_node = int(np.argmax(all_embeds_norm @ mean))
-
-    if save:
-        data = load_data()
-        data.append({"name":name,"graph":graph,"center_node":center_node,"all_embeds":all_embeds_norm})
-        save_data(data)
-
-    return graph,center_node,all_embeds_norm
+        return graph,center_node,all_embeds_norm
 
 def add_to_graph(all_embeds,query_embed,graph,center):
-    all_embeds = np.array(all_embeds, dtype=np.float32)
-    norms = np.linalg.norm(all_embeds, axis=1, keepdims=True)
-    all_embeds_norm = all_embeds / np.clip(norms, 1e-8, None)
-    query_norm = query_embed/np.linalg.norm(query_embed)
+    with console.status("[dim] Adding To Graph...[/dim]",spinner="dots"):
+        all_embeds = np.array(all_embeds, dtype=np.float32)
+        norms = np.linalg.norm(all_embeds, axis=1, keepdims=True)
+        all_embeds_norm = all_embeds / np.clip(norms, 1e-8, None)
+        query_norm = query_embed/np.linalg.norm(query_embed)
 
-    threshold = -math.inf
+        threshold = -math.inf
 
-    visited = set()
-    similar = set()
-    stack = list()
+        visited = set()
+        similar = set()
+        stack = list()
 
-    stack.append(center)
+        stack.append(center)
 
-    offset = 0.15
+        offset = 0.15
 
-    while stack:
-        cur_id = stack.pop()
+        while stack:
+            cur_id = stack.pop()
 
-        if cur_id in visited:
-            continue
+            if cur_id in visited:
+                continue
 
-        visited.add(cur_id)
+            visited.add(cur_id)
 
-        sim = float(all_embeds_norm[cur_id] @ query_norm)
+            sim = float(all_embeds_norm[cur_id] @ query_norm)
 
-        diff = math.fabs(sim - threshold)
+            diff = math.fabs(sim - threshold)
 
-        if diff <= offset and diff > 0:
-            similar.add(cur_id)
-        elif diff >= offset:
-            threshold = sim
-            similar.clear()
-            similar.add(int(cur_id))
+            if diff <= offset and diff > 0:
+                similar.add(cur_id)
+            elif diff >= offset:
+                threshold = sim
+                similar.clear()
+                similar.add(int(cur_id))
 
-        stack.extend(graph[cur_id])
+            stack.extend(graph[cur_id])
 
-    graph.append(list(similar)[:min(8, len(similar))])
+        graph.append(list(similar)[:min(8, len(similar))])
 
-    for s in similar:
-        graph[s].append(len(graph)-1)
+        for s in similar:
+            graph[s].append(len(graph)-1)
 
-    all_norm = np.vstack([all_embeds_norm,query_norm])
-    mean = np.mean(all_norm, axis=0)
-    mean_norm = np.linalg.norm(mean)
-    mean = mean/mean_norm
+        all_norm = np.vstack([all_embeds_norm,query_norm])
+        mean = np.mean(all_norm, axis=0)
+        mean_norm = np.linalg.norm(mean)
+        mean = mean/mean_norm
 
-    center = int(np.argmax(all_norm @ mean))
+        center = int(np.argmax(all_norm @ mean))
 
-    return graph,center,np.vstack([all_embeds_norm,query_norm])
+        return graph,center,np.vstack([all_embeds_norm,query_norm])
 
 def update_graph(name, query_embed):
     data = load_data()
@@ -136,48 +138,49 @@ def update_graph(name, query_embed):
     save_data(data)
 
 def check_graph(all_embeds, query_embed, graph, max_search=5,max_depth=10,center_node=None):
-    q_norm = np.linalg.norm(query_embed)
-    query_norm = query_embed / np.clip(q_norm, 1e-8, None)
+    with console.status("[dim]Checking Graph...[/dim]",spinner="dots"):
+        q_norm = np.linalg.norm(query_embed)
+        query_norm = query_embed / np.clip(q_norm, 1e-8, None)
 
-    visited = set()
-    similar = set()
-    stack = list()
+        visited = set()
+        similar = set()
+        stack = list()
 
-    number_of_max_searches = 0
+        number_of_max_searches = 0
 
-    depth = 0
-    stack.append((center_node,depth))
+        depth = 0
+        stack.append((center_node,depth))
 
-    threshold = -math.inf
-    offset = 0.2
+        threshold = -math.inf
+        offset = 0.2
 
-    while stack and number_of_max_searches < max_search:
-        cur_id,d = stack.pop()
+        while stack and number_of_max_searches < max_search:
+            cur_id,d = stack.pop()
 
-        if cur_id in visited or d >= max_depth :
-            continue
+            if cur_id in visited or d >= max_depth :
+                continue
 
-        number_of_max_searches += 1
+            number_of_max_searches += 1
 
-        visited.add(cur_id)
+            visited.add(cur_id)
 
-        sim = float(all_embeds[cur_id] @ query_norm)
+            sim = float(all_embeds[cur_id] @ query_norm)
 
-        console.print(f"[dim]sim centre: {sim}[/dim]")
+            console.print(f"[dim]sim centre: {sim}[/dim]")
 
-        diff = math.fabs(sim-threshold)
+            diff = math.fabs(sim-threshold)
 
-        if diff <= offset and diff > 0:
-            similar.add(cur_id)
-        elif diff >= offset:
-            threshold = sim
-            similar.clear()
-            similar.add(int(cur_id))
+            if diff <= offset and diff > 0:
+                similar.add(cur_id)
+            elif diff >= offset:
+                threshold = sim
+                similar.clear()
+                similar.add(int(cur_id))
 
-        for n in graph[cur_id]:
-            stack.append((n, d + 1))
+            for n in graph[cur_id]:
+                stack.append((n, d + 1))
 
-    return similar
+        return similar
 
 def compare_embed(query_embed, name,depth):
     data = load_data()

@@ -134,16 +134,6 @@ def make_batch(chunks):
 
     return batches
 
-def make_summaries(batches):
-    summaries = []
-    for batch in batches:
-        s = get_summary(batch)
-        summaries.append(s)
-
-    s = [i for summary in summaries for i in summary]
-
-    return s
-
 def insert_doc():
     root = Tk()
     root.withdraw()
@@ -153,14 +143,7 @@ def insert_doc():
     if not filepath:
         console.print("[dim]No file selected[/dim]")
     else:
-        ask_with_summary = ask_user("Do You Want To Save Summary of doc OR actual doc (Press 0 for Actual 1 For Summary) (Note Summaries can be Wrong Or might not cover details): ")
-
-        if ask_with_summary == "0":
-            with_summary = False
-        else:
-            with_summary = True
-
-        add_doc(filepath,with_summary)
+        add_doc(filepath)
 
 def make_chunks(t):
     max_limit = 1500
@@ -215,7 +198,6 @@ def add_doc(doc_path,with_summary=False):
         for d in data:
             if d['file_name'] == file_name:
                 return
-    text = ""
 
     if doc_path.endswith(".pdf"):
         text = read_doc(doc_path)
@@ -226,39 +208,30 @@ def add_doc(doc_path,with_summary=False):
         console.print("[red]Unsupported file type[/red]")
         return
 
+    if not text.strip():
+        console.print("[red]No readable text found in document[/red]")
+        return
+
     with console.status("[dim]Making Chunks And Batches.. [/dim]", spinner="dots"):
         chunks = make_chunks(text)
-        batches = make_batch(chunks)
 
     key_words = []
     embeddings = []
-    summaries = []
 
-    if with_summary:
-        summaries = make_summaries(batches)
-
-        for summary in summaries:
-            e = np.array(get_embedding([summary["summary"]])[0],dtype=np.float32)
-            embeddings.append(e)
-
-            if not summary["key_words"]:
-                key_words.append([])
-            else:
-                key_words.append(summary["key_words"])
-    else:
-        for chunk in chunks:
-            kw = loader.extract_keywords(chunk)
-            key_words.extend(kw)
-            e = np.array(get_embedding([chunk + f"Keywords: {", ".join(kw)}"])[0],dtype=np.float32)
-            embeddings.append(e)
+    for chunk in chunks:
+        kw = loader.extract_keywords(chunk)
+        key_words.extend(kw)
+        e = np.array(get_embedding([chunk + f"Keywords: {", ".join(kw)}"])[0], dtype=np.float32)
+        embeddings.append(e)
 
     np_embeddings = np.array(embeddings,dtype=np.float32)
 
-    json_dict = {"file_name":file_name,"doc_data":summaries if with_summary else chunks}
+    json_dict = {"file_name":file_name,"doc_data":chunks}
 
     make_graph(np_embeddings,file_name,True)
 
     write_json(json_dict)
+
 
 def select_docs():
     selected_docs = []
@@ -270,7 +243,7 @@ def select_docs():
         options = []
 
         if docs:
-            if len(selected_docs) > max_attachments:
+            if len(selected_docs) >= max_attachments:
                 console.print("[dim]Max Attachments Reached :([/dim]")
                 break
 

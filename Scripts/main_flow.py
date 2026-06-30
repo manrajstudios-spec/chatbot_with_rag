@@ -115,13 +115,17 @@ while True:
     previous_exchanges = []
     previous_exchanges_text_query = ""
 
-    for i in range(0, len(context_exchanges), 2):
-        previous_exchanges.append(
-            {"user": context_exchanges[i]["content"], "assistant": context_exchanges[i + 1]["content"]})
-        previous_exchanges_text_query += f"{context_exchanges[i]['content']}\n{context_exchanges[i + 1]['content']}\n"
+    for i in range(len(context_exchanges)-1, 0, -2):
+        previous_exchanges.append({"user": context_exchanges[i-1]["content"], "assistant": context_exchanges[i]["content"]})
 
-        if len(previous_exchanges) > number_of_prev_msg_to_use:
+        if len(previous_exchanges) >= number_of_prev_msg_to_use:
             break
+
+    previous_exchanges.reverse()
+
+    for i in range(len(previous_exchanges)):
+        previous_exchanges_text_query += previous_exchanges[i]["user"] + "\n"
+        previous_exchanges_text_query += previous_exchanges[i]["assistant"] + "\n"
 
     modified_query, rag_needed, search_needed, search_clarification, topics, searched = route_msg(previous_exchanges,query,previous_exchanges_text_query)
 

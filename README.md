@@ -1,239 +1,473 @@
-# Multi Agent Chat Bot
+# Multi-Agent ChatBot / Yuzu AI Companion
 
-It is a personal AI companion built from scratch. She talks like a real friend, remembers things over time, can read documents, search the web, and respond using her own voice. Every core component — the retrieval system, the graph search, the chunker — is custom-built with no off-the-shelf RAG frameworks.
+Yuzu is a local-first personal AI companion built from scratch in Python.
+
+She can chat naturally, remember useful past conversations, read documents, search the web, open apps, use voice input, and respond through text or speech. The core systems — routing, memory retrieval, document retrieval, chunking, graph search, and context building — are custom-built without LangChain, LlamaIndex, or any ready-made RAG framework.
+
+This project is mainly built as a standalone local AI assistant and learning project. It focuses on understanding how real assistant pipelines work internally: query routing, tool use, retrieval, memory, web search, document search, speech input, and response generation.
 
 ---
 
 ## Features
 
-- **Conversational AI** — Powered by GPT-OSS 120B via Groq. Yuzu responds casually and naturally, not like an assistant.
-- **Custom RAG (Long-Term Memory)** — A hierarchical retrieval system built on SQLite. Past conversations are stored, grouped by topic, and retrieved using semantic similarity.
-- **Web Search** — Automatically detects when a query needs live information, searches DuckDuckGo, scrapes and chunks the pages, then retrieves only the relevant parts using HNSW graph search.
-- **Document Reader** — Load PDFs or TXT files into the session. Documents are chunked, embedded, and stored in NPZ files for fast retrieval. Supports optional summarization.
-- **Voice Interface** — Wake word detection ("Alexa") using OpenWakeWord, silence-aware recording via WebRTC VAD, speech-to-text via Faster Whisper (GPU), and text-to-speech via Edge TTS (Japanese Nanami voice, played with ffplay).
-- **App Launcher** — She can open applications or websites from a user request. App names are fuzzy-matched against everything on your `$PATH`.
-- **Query Router** — Every message is passed through an NLP routing layer that extracts topics, decides whether to search, and identifies apps to launch — all in a single structured JSON call.
-- **Local Embedding** — All embeddings use a local Gemma3 300M model running in LM Studio (`text-embedding-embeddinggemma-300m`). Nothing is sent to an external embedding API.
-- **Intent Classifier** — A locally fine-tuned transformer model classifies message intent before routing.
-- **Custom Graph Search** — A from-scratch approximate nearest-neighbor graph (Hierarchical Navigable Small World) written in pure Python/NumPy. Used for doc retrieval, web chunk retrieval, and RAG group lookup.
+* **Conversational AI** — Uses `openai/gpt-oss-120b` through Groq for natural chat responses.
+* **Custom Long-Term Memory RAG** — Stores useful conversation exchanges in SQLite, groups them by semantic similarity, and retrieves them when relevant.
+* **Query Router** — Every message is routed through a structured JSON layer that decides whether the assistant needs memory, web search, app opening, or document retrieval.
+* **Web Search** — Searches DuckDuckGo, scrapes pages with `trafilatura`, chunks the content, embeds it, and retrieves only the most relevant parts.
+* **Document Reader** — Loads PDF/TXT files, extracts text, chunks it, embeds chunks with keyword-boosted text, and retrieves relevant document sections during chat.
+* **Custom Graph Retrieval** — Uses a lightweight NumPy-based graph search system for document chunks, web chunks, and retrieval collections.
+* **Voice Interface** — Supports wake word detection, speech/silence detection, Faster Whisper transcription, and optional text-to-speech.
+* **App Launcher** — Can open local apps or websites from natural language using fuzzy matching over executables in `$PATH`.
+* **Local Embeddings** — Uses a local OpenAI-compatible embedding server for embeddings instead of external embedding APIs.
+* **CLI Experience** — Uses Rich panels and status spinners to make the terminal assistant feel smoother and easier to debug.
 
 ---
 
 ## Architecture
+
 ---
+
 <img width="803" height="1258" alt="Main" src="https://github.com/user-attachments/assets/d5c626a4-d62d-4d93-9573-a4ccd74ed6c9" />
 ---
 
-```
-User Input (text or voice)
-        │
-        ▼
-   Query Router
-  ┌─────────────────────────────┐
-  │  Topic Extraction           │
-  │  Web Search Decision        │
-  │  App Launch Detection       │
-  └──────┬──────────────────────┘
-         │
-    ┌────┴────┐
-    │         │
-Web Search   Skip
-    │
-  HNSW chunk retrieval (temp, not saved)
-         │
-         ▼
-    RAG Retrieval
-  ┌──────────────────────────────────────┐
-  │  Master Table (SQLite)               │
-  │    └─ Sub-tables (per topic group)   │
-  │         └─ Exchanges + Embeddings    │
-  │  Mean embedding per group            │
-  │  HNSW graph per group (saved)        │
-  └──────────────────────────────────────┘
-         │
-    Doc Retrieval (if doc loaded)
-  ┌──────────────────────────────────────┐
-  │  NPZ file per doc                    │
-  │  Chunks + keyword-merged embeddings  │
-  │  HNSW graph (saved)                  │
-  └──────────────────────────────────────┘
-         │
-         ▼
-   Build context window
-   [system prompt + retrieved memory + facts + web info + doc info + last N turns]
-         │
-         ▼
-   GPT-OSS 120B (Groq) → Streamed reply
-         │
-         ▼
-   TTS (Edge TTS → ffplay) [optional]
+```text
+User Input
+   │
+   ├── Written input
+   └── Voice input
+        └── Wake word → VAD → Whisper STT
+   │
+   ▼
+Query Router
+   │
+   ├── Rewrites query if needed
+   ├── Extracts topics
+   ├── Decides if RAG is needed
+   ├── Decides if web search is needed
+   ├── Detects app/website opening requests
+   └── Produces structured JSON
+   │
+   ▼
+Context Gathering
+   │
+   ├── Long-term memory retrieval
+   ├── Loaded document retrieval
+   ├── Web search retrieval
+   ├── Recent conversation turns
+   └── User facts
+   │
+   ▼
+Prompt Builder
+   │
+   ├── Yuzu system prompt
+   ├── Retrieved memories
+   ├── Retrieved document chunks
+   ├── Retrieved web chunks
+   ├── Recent context
+   └── Current user query
+   │
+   ▼
+Groq / GPT-OSS 120B
+   │
+   ▼
+Streamed response
+   │
+   └── Optional TTS
+   │
+   ▼
+Conversation saved back into memory
 ```
 
 ---
 
 ## RAG Design
+
 ---
+
 <img width="1180" height="1352" alt="Rag" src="https://github.com/user-attachments/assets/3679799e-ce46-4980-a388-f3f37c32dace" />
 ---
-The RAG system avoids summarization intentionally — summarizing exchanges loses detail and nuance, so raw exchanges are stored and retrieved directly.
 
-**Storage structure:**
+The memory system stores raw conversation exchanges instead of only summaries. This is intentional because summaries can lose useful details, tone, and context.
 
-- `master_table` — one row per topic group. Stores the group's mean embedding (updated incrementally as new exchanges are added) and a list of topics.
-- Sub-tables — one per group, named by UUID. Each row is a single exchange (user + assistant turn) with its embedding and topics.
+The RAG system uses a two-level structure:
 
-**Retrieval flow:**
+### 1. Master Table
 
-1. Embed the current conversation window (last N turns + extracted topics).
-2. Cosine-compare against all group mean embeddings in `master_table` → pick top-k groups above threshold.
-3. Inside each matched group, run HNSW graph search to retrieve the most relevant individual exchanges.
-4. Return raw exchanges + user facts (stored separately in `facts.json`).
+The `master_table` stores one row per semantic group.
 
+Each group has:
 
+* a table name
+* a mean embedding
+* a count of stored exchanges
+* related topics
 
-**Saving flow:**
+The mean embedding acts like a rough semantic center for that group.
 
-Every `n` exchanges, the conversation history is flushed. An LLM call extracts facts and topics per exchange. Each exchange is embedded, compared against existing groups, and either added to a matching group or used to create a new one. The group's mean embedding and HNSW graph are updated.
+### 2. Group Tables
+
+Each group has its own SQLite table containing individual exchanges.
+
+Each row stores:
+
+* the raw user + assistant exchange
+* the exchange embedding
+* topics
+* date/time metadata
 
 ---
 
-## HNSW
+## Memory Retrieval Flow
 
-Custom implementation in `HNSW.py`. No libraries used beyond NumPy and `heapq`.
+```text
+Current query + recent conversation
+   │
+   ▼
+Embedding
+   │
+   ▼
+Compare against master group mean embeddings
+   │
+   ▼
+Select most relevant groups
+   │
+   ▼
+Search inside matched groups
+   │
+   ▼
+Return raw relevant exchanges + user facts
+```
 
-- Builds a neighbor graph for a set of embeddings using cosine similarity.
-- Each node connects to its top-8 nearest neighbors.
-- The entry point (center node) is selected as the node closest to the mean embedding.
-- Graph traversal uses a min-heap priority queue, visiting neighbors greedily by similarity.
-- Graphs are serialized with `pickle` and saved/loaded per named collection (one per doc, one per RAG group).
+The assistant only uses memory when the router decides it is useful. This prevents old memories from being forced into every response.
+
+---
+
+## Memory Saving Flow
+
+Conversation history is kept in the current session. Once the history grows past a limit, older exchanges are flushed into the RAG system.
+
+During saving:
+
+1. An LLM extracts useful exchanges.
+2. It removes filler or useless turns.
+3. Topics and facts are extracted.
+4. Each useful exchange is embedded.
+5. The exchange is compared with existing memory groups.
+6. It is either added to a matching group or used to create a new group.
+7. Group mean embeddings are updated.
+
+---
+
+## Custom Graph Search
+
+The project uses a custom NumPy-based graph retrieval system.
+
+It is HNSW-inspired, but it is intentionally lightweight and built for learning. It is not a full production HNSW implementation.
+
+The graph system:
+
+* normalizes embeddings
+* connects each node to its nearest neighbors
+* chooses a center node using the mean embedding
+* performs greedy traversal through similar nodes
+* retrieves relevant nodes without brute-forcing every item every time
+
+This graph retrieval is used for:
+
+* document chunks
+* web search chunks
+* retrieval collections
+
+The system originally used fixed similarity thresholds, but was upgraded to greedy graph traversal because hard thresholds can miss useful chunks when embedding scores vary.
+
+```text
+Old approach:
+query → compare all chunks → keep chunks above threshold
+
+Current approach:
+query → start from graph center → move through similar neighbors → collect relevant chunks
+```
+
+This makes retrieval more adaptive and less dependent on one manually tuned threshold.
 
 ---
 
 ## Document Pipeline
+
 ---
+
 <img width="580" height="553" alt="docs" src="https://github.com/user-attachments/assets/d4c93080-396b-47e0-8f18-6680d4ac078f" />
 ---
-1. User selects a PDF or TXT file via a file dialog.
-2. Text is extracted (pdfplumber for PDFs) and cleaned.
-3. Text is split into overlapping sentence-based chunks (1700–2000 chars, 2-sentence overlap).
-4. Each chunk is embedded with keywords merged into the embedding input for better retrieval signal.
-5. Optionally, chunks are passed through a local model to generate summaries — user's choice.
-6. Embeddings, keywords, and mean embedding are saved to a `.npz` file.
-7. An HNSW graph is built and saved for the document.
 
-At query time, the user's message is embedded and the HNSW graph is used to retrieve the most relevant chunks.
+The document reader allows the user to attach PDF or TXT files during a chat session.
+
+Document ingestion flow:
+
+1. User selects a PDF or TXT file through a file picker.
+2. Text is extracted using PyMuPDF for PDFs or normal file reading for TXT files.
+3. Text is cleaned.
+4. Text is split into overlapping sentence-based chunks.
+5. Keywords are extracted from each chunk.
+6. Chunk text and keywords are merged before embedding.
+7. Embeddings are stored.
+8. A graph is built over the document chunks.
+9. Document metadata and chunks are saved for later retrieval.
+
+At query time:
+
+```text
+User query
+   │
+   ▼
+Keyword extraction
+   │
+   ▼
+Query embedding
+   │
+   ▼
+Graph search over loaded document chunks
+   │
+   ▼
+Relevant chunks added to context
+```
+
+Document summarization was removed from the main flow because it slowed down ingestion and could lose exact details. Raw chunks are used instead for more faithful document Q&A.
 
 ---
 
 ## Web Search Pipeline
----
-<img width="543" height="1181" alt="Web Search" src="https://github.com/user-attachments/assets/e39f254f-fac9-4ec2-a8ca-327bb0d337c0" />
 
 ---
-1. Router extracts 1–3 optimized search queries from the conversation.
-2. DuckDuckGo (`ddgs`) fetches top 2 results per query.
-3. Pages are scraped with `trafilatura`. Falls back to snippet if scraping fails.
-4. Scraped text is chunked with the same chunker used for documents.
-5. Chunks are embedded and a temporary HNSW graph is built (not saved).
-6. Only chunks above the similarity threshold are kept and passed into context.
+
+<img width="543" height="1181" alt="Web Search" src="https://github.com/user-attachments/assets/e39f254f-fac9-4ec2-a8ca-327bb0d337c0" />
+---
+
+Web search is controlled by the router. The assistant does not search blindly for every message.
+
+Flow:
+
+1. Router decides whether web search is needed.
+2. Router creates optimized search queries.
+3. DuckDuckGo search is used through `ddgs`.
+4. Search results are scraped with `trafilatura`.
+5. If scraping fails, the result snippet is used as fallback.
+6. Web text is chunked.
+7. Chunks are embedded.
+8. A temporary graph is built.
+9. Relevant chunks are retrieved and passed into the final prompt.
+
+Web search chunks are temporary and are not saved into long-term memory by default.
 
 ---
 
 ## Voice Pipeline
 
-| Stage | Tool |
-|---|---|
-| Wake word | OpenWakeWord (`alexa` model) |
-| Recording | `sounddevice` + WebRTC VAD (aggressiveness 2) |
-| Silence detection | 2 seconds of non-speech frames |
-| Transcription | Faster Whisper (`base`, CUDA) |
-| TTS | Edge TTS (`ja-JP-NanamiNeural`) |
-| Playback | `ffplay` (subprocess, no display) |
+Voice mode is optional.
+
+| Stage            | Tool           |
+| ---------------- | -------------- |
+| Wake word        | OpenWakeWord   |
+| Audio recording  | `sounddevice`  |
+| Speech detection | WebRTC VAD     |
+| Transcription    | Faster Whisper |
+| Text-to-speech   | Edge TTS       |
+| Playback         | `ffplay`       |
+
+Voice flow:
+
+```text
+Wake word
+   │
+   ▼
+Start listening
+   │
+   ▼
+Detect speech frames using VAD
+   │
+   ▼
+Record until enough silence is detected
+   │
+   ▼
+Transcribe with Faster Whisper
+   │
+   ▼
+Send text into normal assistant pipeline
+```
+
+The assistant can run in written mode without needing to use the voice pipeline.
 
 ---
 
-## Models
+## App Launcher
 
-| Role | Model | Where |
-|---|---|---|
-| Chat + Routing | `openai/gpt-oss-120b` | Groq API |
-| Embeddings | `text-embedding-embeddinggemma-300m` | LM Studio (local) |
-| Doc summaries | `nvidia/nemotron-3-nano-4b` | LM Studio (local) |
-| Intent classifier | Fine-tuned transformer | Local (`/Model/intent_clf`) |
-| STT | Faster Whisper `base` | Local (GPU) |
-| Wake word | OpenWakeWord `alexa` | Local |
-| TTS | Edge TTS `ja-JP-NanamiNeural` | Edge (streaming) |
+Yuzu can open apps or websites from user requests.
+
+The app launcher:
+
+1. Extracts requested apps/sites from the router output.
+2. Scans executables available in the system `$PATH`.
+3. Uses fuzzy matching to find the closest app name.
+4. Opens the matched app using `subprocess`.
+5. Falls back to web search/opening if needed.
+
+This allows messages like:
+
+```text
+open brave
+open vscode
+search this on web
+```
+
+to be handled by the same routing system.
+
+---
+
+## Models and Services
+
+| Role                     | Model / Tool                                             | Location         |
+| ------------------------ | -------------------------------------------------------- | ---------------- |
+| Chat model               | `openai/gpt-oss-120b`                                    | Groq API         |
+| Router model             | `openai/gpt-oss-120b`                                    | Groq API         |
+| Memory extraction        | `openai/gpt-oss-120b`                                    | Groq API         |
+| Embeddings               | `embeddinggemma:300m` / OpenAI-compatible local endpoint | Local            |
+| Speech-to-text           | Faster Whisper `base`                                    | Local            |
+| Wake word                | OpenWakeWord                                             | Local            |
+| Voice activity detection | WebRTC VAD                                               | Local            |
+| Text-to-speech           | Edge TTS                                                 | Online streaming |
+| CLI UI                   | Rich                                                     | Local            |
 
 ---
 
 ## Project Structure
 
-```
-Yuzu-Ai-Companion/
-├── main.py              # Entry point, CLI loop, context assembly
-├── router.py            # Query routing, web search, app launching
-├── rag_system.py        # Long-term memory (hierarchical RAG)
-├── doc_reader.py        # Document loading, chunking, retrieval
-├── HNSW.py              # Custom HNSW graph (built from scratch)
-├── loader.py            # Shared clients (Groq, LM Studio), spaCy, KeyBERT
-├── STT.py               # Wake word, VAD, recording, Whisper transcription
-├── TTS.py               # Edge TTS + ffplay playback
-├── retrieving_clf.py    # Intent classifier inference
+```text
+Multi-Agent-ChatBot/
 │
 ├── Data/
 │   ├── chat_data/
-│   │   └── complex_rag.db       # SQLite RAG database
+│   │   └── complex_rag.db
 │   ├── docs/
-│   │   ├── facts.json           # Persistent user facts
-│   │   ├── doc_ref.json         # Loaded document registry
-│   │   └── npz_files/           # Per-document embeddings
+│   │   ├── facts.json
+│   │   ├── doc_ref.json
+│   │   └── context/
 │   ├── Graph/
-│   │   └── hnsw_data.pickle     # Saved HNSW graphs
+│   │   └── graph_data.pickle
 │   └── Config/
-│       └── config_json.json     # Thresholds and settings
+│       └── config_json.json
 │
-└── Model/
-    ├── intent_clf/              # Fine-tuned intent classifier
-    └── intent_tokenizer/
+├── Scripts/
+│   ├── main_flow.py        # Main CLI loop and context assembly
+│   ├── router.py           # Query routing, web search, app launching
+│   ├── rag_system.py       # Long-term memory RAG
+│   ├── doc_reader.py       # Document loading, chunking, retrieval
+│   ├── graph_search.py     # Custom graph-based retrieval
+│   ├── loader.py           # Shared clients, embeddings, keyword extraction
+│   ├── STT.py              # Wake word, VAD, Whisper transcription
+│   ├── TTS.py              # Edge TTS playback
+│   ├── retrieving_clf.py   # Intent classifier inference
+│   ├── training_clf.py     # Intent classifier training
+│   └── make_data.py        # Dataset/helper script
+│
+├── requirements.txt
+├── .gitignore
+└── README.md
 ```
 
 ---
 
 ## Setup
 
-**Requirements:** Python 3.10+, CUDA GPU (for Faster Whisper), LM Studio running locally on port 1234.
+### 1. Clone the repository
 
 ```bash
-Requirements Are In requirements.txt file 
+git clone https://github.com/manrajstudios-spec/Multi-Agent-ChatBot.git
+cd Multi-Agent-ChatBot
 ```
 
-Set your Groq API key in a `.env` file:
-```
-groq=your_groq_api_key_here
-```
+### 2. Create a virtual environment
 
-Load the embedding model in LM Studio and start the local server on `http://127.0.0.1:1234`.
-
-**Run:**
 ```bash
-python main.py
+python -m venv .venv
+source .venv/bin/activate
 ```
 
-On startup, choose `1` for text input or `0` for voice (wake word: **"Alexa"**).
+On Windows:
 
-**In-session commands:**
+```bash
+.venv\Scripts\activate
+```
 
-| Input | Action |
-|---|---|
-| `q` | Save conversation to RAG and quit |
-| `n` | Load a document into the session |
-| `r` | Unload a loaded document |
+### 3. Install dependencies
+
+```bash
+pip install -r requirements.txt
+```
+
+You may also need the spaCy English model:
+
+```bash
+python -m spacy download en_core_web_sm
+```
+
+### 4. Create `.env`
+
+Create a `.env` file in the project root:
+
+```env
+groq_api=your_groq_api_key_here
+```
+
+### 5. Start the local embedding server
+
+The current code expects an OpenAI-compatible local embedding endpoint.
+
+Default endpoint used in code:
+
+```text
+http://localhost:11434/v1
+```
+
+Default embedding model:
+
+```text
+embeddinggemma:300m
+```
+
+Make sure the local embedding server is running before starting the assistant.
+
+### 6. Run the assistant
+
+Because the scripts currently use relative paths like `../Data/...`, run from inside the `Scripts` folder:
+
+```bash
+cd Scripts
+python main_flow.py
+```
+
+On startup, choose:
+
+| Input | Mode         |
+| ----- | ------------ |
+| `1`   | Written chat |
+| `0`   | Voice chat   |
 
 ---
 
-## Config
+## In-Session Commands
 
-`Data/Config/config_json.json` controls retrieval thresholds:
+| Command | Action                                     |
+| ------- | ------------------------------------------ |
+| `n`     | Load a document                            |
+| `r`     | Unload a document                          |
+| `q`     | Save current conversation context and quit |
+
+---
+
+## Configuration
+
+`Data/Config/config_json.json` stores retrieval thresholds and settings.
+
+Example:
 
 ```json
 {
@@ -243,14 +477,38 @@ On startup, choose `1` for text input or `0` for voice (wake word: **"Alexa"**).
 }
 ```
 
-Tune these to control how aggressively memory and web chunks are retrieved.
+These thresholds control how aggressively memory and web/document chunks are retrieved.
 
 ---
 
-## Notes
+## Current Limitations
 
-- Conversation history is kept in memory for the session. Every `n=20` exchanges, older turns are flushed to the RAG database automatically.
-- Only the last 5 exchanges are sent to the router for topic/search extraction to keep routing fast and focused.
-- Web search results are capped at 4000 characters before being passed to context.
-- The HNSW graphs saved to disk are rebuilt in-place when new embeddings are added — the entire graph for that collection is recomputed.
-- TTS is disabled by default (`make_sound` is commented out in `main.py`). Uncomment to enable.
+This is a standalone local project, so some parts are still being improved.
+
+* Some exception handling is still rough.
+* Web search can fail when pages block scraping.
+* Router output depends on valid JSON from the model.
+* Voice mode depends on microphone access, Faster Whisper, PyAudio/sounddevice, and `ffplay`.
+* The graph search is custom and lightweight, not a full production HNSW implementation.
+* The project is not packaged as an installable Python module yet.
+* Some paths are still designed around running from the `Scripts` directory.
+
+---
+
+## Why This Project Exists
+
+This project was built to understand how AI assistants actually work internally.
+
+Instead of using a ready-made agent or RAG framework, the system builds the core pieces manually:
+
+* routing
+* long-term memory
+* semantic grouping
+* document retrieval
+* web retrieval
+* graph search
+* voice input
+* context assembly
+* response streaming
+
+The goal is not just to make a chatbot, but to learn how a full assistant pipeline connects end to end.

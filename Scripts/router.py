@@ -1,6 +1,5 @@
 import os
 import json
-import loader
 import webbrowser
 import subprocess
 import trafilatura

@@ -3,3 +3,7 @@
 __pycache__/
 .venv/
 .idea
+test.py
+.json
+.db
+.pickle
